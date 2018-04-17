@@ -618,7 +618,7 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
         }
         _smutex.lock();
         startup();
-        _parser.setTimeout(1500);
+        _parser.setTimeout(3000);
         ret = _parser.send("AT+CIPSEND=%d,%d", id, send_size)
            && _parser.recv(">")
            && (_parser.write((char*)data + index, (int)send_size) >= 0)
@@ -724,8 +724,9 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount)
                 }
             }
             retry = true;
+        } else {
+            _smutex.unlock();
         }
-        _smutex.unlock();
     }
 }
 
