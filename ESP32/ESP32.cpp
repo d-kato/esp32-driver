@@ -18,13 +18,15 @@
 #include "ESP32.h"
 
 #define ESP32_DEFAULT_BAUD_RATE   115200
+#define ESP32_ALL_SOCKET_IDS      -1
 
 ESP32 * ESP32::instESP32 = NULL;
 
-ESP32 * ESP32::getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate)
+ESP32 * ESP32::getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+                            PinName rts, PinName cts, int baudrate)
 {
     if (instESP32 == NULL) {
-        instESP32 = new ESP32(en, io0, tx, rx, debug, baudrate);
+        instESP32 = new ESP32(en, io0, tx, rx, debug, rts, cts, baudrate);
     } else {
         if (debug) {
             instESP32->debugOn(debug);
@@ -33,7 +35,8 @@ ESP32 * ESP32::getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, boo
     return instESP32;
 }
 
-ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate)
+ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+    PinName rts, PinName cts, int baudrate)
     : _p_wifi_en(NULL), _p_wifi_io0(NULL), init_end(false)
     , _serial(tx, rx, ESP32_DEFAULT_BAUD_RATE), _parser(&_serial, "\r\n", 512)
     , _packets(0), _packets_end(&_packets)
@@ -53,6 +56,19 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int ba
     memset(_ids, 0, sizeof(_ids));
     memset(_cbs, 0, sizeof(_cbs));
 
+    _rts = rts;
+    _cts = cts;
+
+    if ((_rts != NC) && (_cts != NC)) {
+        _flow_control = 3;
+    } else if (_rts != NC) {
+        _flow_control = 1;
+    } else if (_cts != NC) {
+        _flow_control = 2;
+    } else {
+        _flow_control = 0;
+    }
+
     _serial.set_baud(ESP32_DEFAULT_BAUD_RATE);
     debugOn(debug);
 
@@ -70,6 +86,8 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int ba
     _parser.oob("WIFI ", callback(this, &ESP32::_connection_status_handler));
 
     _serial.sigio(Callback<void()>(this, &ESP32::event));
+
+    setTimeout();
 }
 
 void ESP32::debugOn(bool debug)
@@ -82,6 +100,7 @@ int ESP32::get_firmware_version()
     int version;
 
     _smutex.lock();
+    startup();
     bool done = _parser.send("AT+GMR")
            && _parser.recv("SDK version:%d", &version)
            && _parser.recv("OK");
@@ -264,11 +283,32 @@ bool ESP32::reset(void)
         if (_parser.send("AT+RST")
             && _parser.recv("OK")) {
             _serial.set_baud(ESP32_DEFAULT_BAUD_RATE);
+#if DEVICE_SERIAL_FC
+            _serial.set_flow_control(SerialBase::Disabled);
+#endif
             _parser.recv("ready");
+            _clear_socket_packets(ESP32_ALL_SOCKET_IDS);
 
             if (_parser.send("AT+UART_CUR=%d,8,1,0,%d", _baudrate, 0)
                 && _parser.recv("OK")) {
                 _serial.set_baud(_baudrate);
+#if DEVICE_SERIAL_FC
+                switch (_flow_control) {
+                    case 1:
+                        _serial.set_flow_control(SerialBase::RTS, _rts);
+                        break;
+                    case 2:
+                        _serial.set_flow_control(SerialBase::CTS, _cts);
+                        break;
+                    case 3:
+                        _serial.set_flow_control(SerialBase::RTSCTS, _rts, _cts);
+                        break;
+                    case 0:
+                    default:
+                        // do nothing
+                        break;
+                }
+#endif
             }
 
             return true;
@@ -573,6 +613,7 @@ bool ESP32::open(const char *type, int id, const char* addr, int port, int opt)
            && _parser.recv("OK");
     }
     setTimeout();
+    _clear_socket_packets(id);
     _smutex.unlock();
 
     return ret;
@@ -626,8 +667,8 @@ void ESP32::_packet_handler()
 {
     int id;
     int amount;
+    uint32_t tmp_timeout;
 
-    startup();
     // parse out the packet
     if (!_parser.recv(",%d,%d:", &id, &amount)) {
         return;
@@ -644,9 +685,11 @@ void ESP32::_packet_handler()
     packet->next = 0;
     packet->index = 0;
 
+    tmp_timeout = last_timeout_ms;
+    setTimeout(500);
     if (!(_parser.read((char*)(packet + 1), amount))) {
         free(packet);
-        setTimeout();
+        setTimeout(tmp_timeout);
         return;
     }
 
@@ -702,40 +745,67 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
     }
 }
 
+void ESP32::_clear_socket_packets(int id)
+{
+    struct packet **p = &_packets;
+
+    while (*p) {
+        if ((*p)->id == id || id == ESP32_ALL_SOCKET_IDS) {
+            struct packet *q = *p;
+
+            if (_packets_end == &(*p)->next) {
+                _packets_end = p; // Set last packet next field/_packets
+            }
+            *p = (*p)->next;
+
+            free(q);
+        } else {
+            // Point to last packet next field
+            p = &(*p)->next;
+        }
+    }
+}
+
 bool ESP32::close(int id, bool wait_close)
 {
     if (wait_close) {
+        _smutex.lock();
         for (int j = 0; j < 2; j++) {
             if (((_id_bits & (1 << id)) == 0)
              || ((_id_bits_close & (1 << id)) != 0)) {
                 _id_bits_close &= ~(1 << id);
                 _ids[id] = false;
+                _clear_socket_packets(id);
+                _smutex.unlock();
                 return true;
             }
-            _smutex.lock();
             startup();
             setTimeout(500);
             _parser.process_oob(); // Poll for inbound packets
             setTimeout();
         }
+        _smutex.unlock();
     }
 
     //May take a second try if device is busy
     for (unsigned i = 0; i < 2; i++) {
+        _smutex.lock();
         if ((_id_bits & (1 << id)) == 0) {
             _id_bits_close &= ~(1 << id);
             _ids[id] = false;
+            _clear_socket_packets(id);
+            _smutex.unlock();
             return true;
         }
-        _smutex.lock();
         startup();
         setTimeout(500);
         if (_parser.send("AT+CIPCLOSE=%d", id)
             && _parser.recv("OK")) {
             setTimeout();
-            _smutex.unlock();
+            _clear_socket_packets(id);
             _id_bits_close &= ~(1 << id);
             _ids[id] = false;
+            _smutex.unlock();
             return true;
         }
         setTimeout();
@@ -748,6 +818,7 @@ bool ESP32::close(int id, bool wait_close)
 
 void ESP32::setTimeout(uint32_t timeout_ms)
 {
+    last_timeout_ms = timeout_ms;
     _parser.set_timeout(timeout_ms);
 }
 

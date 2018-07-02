@@ -33,9 +33,12 @@ protected:
      * @param tx        TX pin
      * @param rx        RX pin
      * @param debug     Enable debugging
+     * @param rts       RTS pin
+     * @param cts       CTS pin
      * @param baudrate  The baudrate of the serial port.
      */
-    ESP32Stack(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate);
+    ESP32Stack(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+               PinName rts, PinName cts, int baudrate);
 
 protected:
     /** Open a socket

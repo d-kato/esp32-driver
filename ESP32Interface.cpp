@@ -18,8 +18,9 @@
 #include "ESP32Interface.h"
 
 // ESP32Interface implementation
-ESP32Interface::ESP32Interface(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate) :
-    ESP32Stack(en, io0, tx, rx, debug, baudrate),
+ESP32Interface::ESP32Interface(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+    PinName rts, PinName cts, int baudrate) :
+    ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate),
      _dhcp(true),
     _ap_ssid(),
     _ap_pass(),
@@ -33,8 +34,8 @@ ESP32Interface::ESP32Interface(PinName en, PinName io0, PinName tx, PinName rx, 
     _esp->attach_wifi_status(callback(this, &ESP32Interface::wifi_status_cb));
 }
 
-ESP32Interface::ESP32Interface(PinName tx, PinName rx, bool debug, int baudrate) :
-    ESP32Stack(NC, NC, tx, rx, debug, baudrate),
+ESP32Interface::ESP32Interface(PinName tx, PinName rx, bool debug) :
+    ESP32Stack(NC, NC, tx, rx, debug, NC, NC, 230400),
      _dhcp(true),
     _ap_ssid(),
     _ap_pass(),

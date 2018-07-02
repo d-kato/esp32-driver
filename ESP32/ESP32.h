@@ -40,9 +40,11 @@ public:
     /**
     * Static method to create or retrieve the single ESP32 instance
     */
-    static ESP32 * getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate);
+    static ESP32 * getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+                                PinName rts, PinName cts, int baudrate);
 
-    ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug, int baudrate);
+    ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
+          PinName rts, PinName cts, int baudrate);
 
     /**
     * Check firmware version of ESP8266
@@ -249,6 +251,10 @@ private:
     } *_packets, **_packets_end;
     int _wifi_mode;
     int _baudrate;
+    PinName _rts;
+    PinName _cts;
+    int _flow_control;
+    uint32_t last_timeout_ms;
 
     std::vector<int> _accept_id;
     uint32_t _id_bits;
@@ -282,6 +288,7 @@ private:
     void _closed_handler_4();
     void _connection_status_handler();
     void _packet_handler();
+    void _clear_socket_packets(int id);
     void event();
     bool recv_ap(nsapi_wifi_ap_t *ap);
 
