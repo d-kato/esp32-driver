@@ -38,7 +38,7 @@ ESP32 * ESP32::getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, boo
 ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate)
     : _p_wifi_en(NULL), _p_wifi_io0(NULL), init_end(false)
-    , _serial(tx, rx, ESP32_DEFAULT_BAUD_RATE), _parser(&_serial, "\r\n", 512)
+    , _serial(tx, rx, ESP32_DEFAULT_BAUD_RATE), _parser(&_serial, "\r\n")
     , _packets(0), _packets_end(&_packets)
     , _id_bits(0), _id_bits_close(0), _server_act(false)
     , _wifi_status(STATUS_DISCONNECTED)
@@ -214,8 +214,6 @@ bool ESP32::del_server()
 
 void ESP32::socket_handler(bool connect, int id)
 {
-    _smutex.lock();
-    startup();
     _cbs[id].Notified = 0;
     if (connect) {
         _id_bits |= (1 << id);
@@ -233,7 +231,6 @@ void ESP32::socket_handler(bool connect, int id)
             }
         }
     }
-    _smutex.unlock();
 }
 
 bool ESP32::accept(int * p_id)
@@ -289,7 +286,7 @@ bool ESP32::reset(void)
             _parser.recv("ready");
             _clear_socket_packets(ESP32_ALL_SOCKET_IDS);
 
-            if (_parser.send("AT+UART_CUR=%d,8,1,0,%d", _baudrate, 0)
+            if (_parser.send("AT+UART_CUR=%d,8,1,0,%d", _baudrate, _flow_control)
                 && _parser.recv("OK")) {
                 _serial.set_baud(_baudrate);
 #if DEVICE_SERIAL_FC
@@ -632,33 +629,35 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
     }
 
     //May take a second try if device is busy
+    _smutex.lock();
     while (error_cnt < 2) {
         if (((_id_bits & (1 << id)) == 0)
          || ((_id_bits_close & (1 << id)) != 0)) {
+            _smutex.unlock();
             return false;
         }
         send_size = amount;
         if (send_size > 2048) {
             send_size = 2048;
         }
-        _smutex.lock();
         startup();
         ret = _parser.send("AT+CIPSEND=%d,%d", id, send_size)
            && _parser.recv(">")
            && (_parser.write((char*)data + index, (int)send_size) >= 0)
            && _parser.recv("SEND OK");
-        _smutex.unlock();
         if (ret) {
             amount -= send_size;
             index += send_size;
             error_cnt = 0;
             if (amount == 0) {
+                _smutex.unlock();
                 return true;
             }
         } else {
             error_cnt++;
         }
     }
+    _smutex.unlock();
 
     return false;
 }
@@ -700,48 +699,69 @@ void ESP32::_packet_handler()
 
 int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
 {
+    struct packet **p;
+    uint32_t retry_cnt = 0;
+    uint32_t idx = 0;
+
     _cbs[id].Notified = 0;
 
-    _smutex.lock();
-    setTimeout(timeout);
-    _parser.process_oob(); // Poll for inbound packets
-    setTimeout();
+    while (1) {
+        _smutex.lock();
+        if (_rts == NC) {
+            setTimeout(1);
+            while (_parser.process_oob()); // Poll for inbound packets
+            setTimeout();
+        } else if ((retry_cnt != 0) ||(_packets == NULL))  {
+            setTimeout(1);
+            _parser.process_oob(); // Poll for inbound packets
+            setTimeout();
+        } else {
+            // do nothing
+        }
 
-    // check if any packets are ready for us
-    for (struct packet **p = &_packets; *p; p = &(*p)->next) {
-        if ((*p)->id == id) {
-            struct packet *q = *p;
+        // check if any packets are ready for us
+        p = &_packets;
+        while (*p) {
+            if ((*p)->id == id) {
+                struct packet *q = *p;
 
-            if (q->len <= amount) { // Return and remove full packet
-                memcpy(data, (uint8_t*)(q+1) + q->index, q->len);
-
-                if (_packets_end == &(*p)->next) {
-                    _packets_end = p;
+                if (q->len <= amount) { // Return and remove full packet
+                    memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, q->len);
+                    if (_packets_end == &(*p)->next) {
+                        _packets_end = p;
+                    }
+                    *p = (*p)->next;
+                    idx += q->len;
+                    amount -= q->len;
+                    free(q);
+                } else { // return only partial packet
+                    memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, amount);
+                    q->len -= amount;
+                    q->index += amount;
+                    idx += amount;
+                    break;
                 }
-                *p = (*p)->next;
-                _smutex.unlock();
-
-                uint32_t len = q->len;
-                free(q);
-                return len;
-            } else { // return only partial packet
-                memcpy(data, (uint8_t*)(q+1) + q->index, amount);
-
-                q->len -= amount;
-                q->index += amount;
-
-                _smutex.unlock();
-                return amount;
+            } else {
+                p = &(*p)->next;
             }
         }
-    }
-    _smutex.unlock();
-
-    if (((_id_bits & (1 << id)) == 0)
-     || ((_id_bits_close & (1 << id)) != 0)) {
-        return -2;
-    } else {
-        return -1;
+        if (idx > 0) {
+            _smutex.unlock();
+            return idx;
+        }
+        if (retry_cnt >= timeout) {
+            if (((_id_bits & (1 << id)) == 0)
+             || ((_id_bits_close & (1 << id)) != 0)) {
+                _smutex.unlock();
+                return -2;
+            } else {
+                _smutex.unlock();
+                return -1;
+            }
+        }
+        retry_cnt++;
+        _smutex.unlock();
+        Thread::wait(1);
     }
 }
 
