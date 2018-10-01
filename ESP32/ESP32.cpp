@@ -125,7 +125,7 @@ bool ESP32::startup()
     }
     if (_p_wifi_en != NULL) {
         _p_wifi_en->write(0);
-        Thread::wait(10);
+        ThisThread::sleep_for(10);
         _p_wifi_en->write(1);
         _parser.recv("ready");
     } else {
@@ -258,7 +258,7 @@ bool ESP32::accept(int * p_id)
         }
         _smutex.unlock();
         if (!ret) {
-            Thread::wait(5);
+            ThisThread::sleep_for(5);
         }
     }
 
@@ -267,7 +267,7 @@ bool ESP32::accept(int * p_id)
             if ((_id_bits_close & (1 << *p_id)) == 0) {
                 break;
             }
-            Thread::wait(10);
+            ThisThread::sleep_for(10);
         }
     }
 
@@ -556,7 +556,7 @@ int ESP32::scan(WiFiAccessPoint *res, unsigned limit)
         _smutex.lock();
         startup();
         _smutex.unlock();
-        Thread::wait(1500);
+        ThisThread::sleep_for(1500);
     }
 
     _smutex.lock();
@@ -761,7 +761,7 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
         }
         retry_cnt++;
         _smutex.unlock();
-        Thread::wait(1);
+        ThisThread::sleep_for(1);
     }
 }
 
