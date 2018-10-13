@@ -1,0 +1,50 @@
+{
+    "name": "esp32",
+    "config": {
+        "wifi-en": {
+            "help": "Enable pin",
+            "value": "NC"
+        },
+        "wifi-io0": {
+            "help": "IO0 pin",
+            "value": "NC"
+        },
+        "wifi-tx": {
+            "help": "Serial TX pin",
+            "value": "NC"
+        },
+        "wifi-rx": {
+            "help": "Serial RX pin",
+            "value": "NC"
+        },
+        "wifi-debug": {
+            "help": "Enable debugging",
+            "value": false
+        },
+        "wifi-rts": {
+            "help": "Serial RTS pin",
+            "value": "NC"
+        },
+        "wifi-cts": {
+            "help": "Serial CTS pin",
+            "value": "NC"
+        },
+        "wifi-baudrate": {
+            "help": "Serial baudrate",
+            "value": "230400"
+        },
+        "provide-default": {
+            "help": "Provide default WifiInterface. [true/false]",
+            "value": false
+        }
+    },
+    "target_overrides": {
+        "GR_LYCHEE": {
+            "esp32.wifi-en" : "P5_3",
+            "esp32.wifi-io0": "P3_14",
+            "esp32.wifi-tx" : "P7_1",
+            "esp32.wifi-rx" : "P0_1",
+            "esp32.provide-default": true
+        }
+     }
+}
