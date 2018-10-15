@@ -45,7 +45,7 @@
             "esp32.wifi-tx" : "P7_1",
             "esp32.wifi-rx" : "P0_1",
             "esp32.wifi-rts": "P7_7",
-            "esp32.wifi-cts : "P7_6",
+            "esp32.wifi-cts": "P7_6",
             "esp32.provide-default": true
         },
         "RZ_A1H": {
