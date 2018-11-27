@@ -641,10 +641,12 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
             send_size = 2048;
         }
         startup();
+        setTimeout(ESP32_SEND_TIMEOUT);
         ret = _parser.send("AT+CIPSEND=%d,%d", id, send_size)
            && _parser.recv(">")
            && (_parser.write((char*)data + index, (int)send_size) >= 0)
            && _parser.recv("SEND OK");
+        setTimeout();
         if (ret) {
             amount -= send_size;
             index += send_size;
@@ -700,68 +702,53 @@ void ESP32::_packet_handler()
 int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
 {
     struct packet **p;
-    uint32_t retry_cnt = 0;
     uint32_t idx = 0;
 
     _cbs[id].Notified = 0;
 
-    while (1) {
-        _smutex.lock();
-        if (_rts == NC) {
-            setTimeout(1);
-            while (_parser.process_oob()); // Poll for inbound packets
-            setTimeout();
-        } else if ((retry_cnt != 0) ||(_packets == NULL))  {
-            setTimeout(1);
-            _parser.process_oob(); // Poll for inbound packets
-            setTimeout();
-        } else {
-            // do nothing
-        }
+    _smutex.lock();
+    setTimeout(timeout);
+    if (_rts == NC) {
+        while (_parser.process_oob()); // Poll for inbound packets
+    } else {
+        _parser.process_oob(); // Poll for inbound packets
+    }
+    setTimeout();
 
-        // check if any packets are ready for us
-        p = &_packets;
-        while (*p) {
-            if ((*p)->id == id) {
-                struct packet *q = *p;
+    // check if any packets are ready for us
+    p = &_packets;
+    while (*p) {
+        if ((*p)->id == id) {
+            struct packet *q = *p;
 
-                if (q->len <= amount) { // Return and remove full packet
-                    memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, q->len);
-                    if (_packets_end == &(*p)->next) {
-                        _packets_end = p;
-                    }
-                    *p = (*p)->next;
-                    idx += q->len;
-                    amount -= q->len;
-                    free(q);
-                } else { // return only partial packet
-                    memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, amount);
-                    q->len -= amount;
-                    q->index += amount;
-                    idx += amount;
-                    break;
+            if (q->len <= amount) { // Return and remove full packet
+                memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, q->len);
+                if (_packets_end == &(*p)->next) {
+                    _packets_end = p;
                 }
-            } else {
-                p = &(*p)->next;
+                *p = (*p)->next;
+                idx += q->len;
+                amount -= q->len;
+                free(q);
+            } else { // return only partial packet
+                memcpy(&(((uint8_t *)data)[idx]), (uint8_t*)(q+1) + q->index, amount);
+                q->len -= amount;
+                q->index += amount;
+                idx += amount;
+                break;
             }
+        } else {
+            p = &(*p)->next;
         }
-        if (idx > 0) {
-            _smutex.unlock();
-            return idx;
-        }
-        if (retry_cnt >= timeout) {
-            if (((_id_bits & (1 << id)) == 0)
-             || ((_id_bits_close & (1 << id)) != 0)) {
-                _smutex.unlock();
-                return -2;
-            } else {
-                _smutex.unlock();
-                return -1;
-            }
-        }
-        retry_cnt++;
-        _smutex.unlock();
-        ThisThread::sleep_for(1);
+    }
+    _smutex.unlock();
+
+    if (idx > 0) {
+        return idx;
+    } else if (((_id_bits & (1 << id)) == 0) || ((_id_bits_close & (1 << id)) != 0)) {
+        return -2;
+    } else {
+        return -1;
     }
 }
 
