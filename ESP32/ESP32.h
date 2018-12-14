@@ -18,8 +18,20 @@
 #ifndef ESP32_H
 #define ESP32_H
 
+#if DEVICE_SERIAL && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_PRESENT)
 #include <vector>
-#include "ATCmdParser.h"
+#include <stdint.h>
+#include "drivers/DigitalOut.h"
+#include "drivers/SerialBase.h"
+#include "drivers/UARTSerial.h"
+#include "features/netsocket/nsapi_types.h"
+#include "features/netsocket/WiFiAccessPoint.h"
+#include "PinNames.h"
+#include "platform/ATCmdParser.h"
+#include "platform/Callback.h"
+#include "platform/mbed_error.h"
+#include "rtos/Mutex.h"
+#include "rtos/ThisThread.h"
 
 #ifndef ESP32_CONNECT_TIMEOUT
 #define ESP32_CONNECT_TIMEOUT 15000
@@ -240,11 +252,11 @@ public:
     static const int8_t STATUS_GOT_IP = 2;
 
 private:
-    DigitalOut * _p_wifi_en;
-    DigitalOut * _p_wifi_io0;
+    mbed::DigitalOut * _p_wifi_en;
+    mbed::DigitalOut * _p_wifi_io0;
     bool init_end;
-    UARTSerial _serial;
-    ATCmdParser _parser;
+    mbed::UARTSerial _serial;
+    mbed::ATCmdParser _parser;
     struct packet {
         struct packet *next;
         int id;
@@ -266,7 +278,7 @@ private:
     rtos::Mutex _smutex; // Protect serial port access
     static ESP32 * instESP32;
     int8_t _wifi_status;
-    Callback<void(int8_t)> _wifi_status_cb;
+    mbed::Callback<void(int8_t)> _wifi_status_cb;
 
     bool _ids[SOCKET_COUNT];
     struct {
@@ -305,5 +317,5 @@ private:
     char _netmask_buffer_ap[16];
     char _mac_buffer_ap[18];
 };
-
+#endif
 #endif

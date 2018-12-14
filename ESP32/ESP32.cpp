@@ -15,10 +15,14 @@
  * limitations under the License.
  */
 
+#if DEVICE_SERIAL && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_PRESENT)
 #include "ESP32.h"
 
 #define ESP32_DEFAULT_BAUD_RATE   115200
 #define ESP32_ALL_SOCKET_IDS      -1
+
+using namespace mbed;
+using namespace rtos;
 
 ESP32 * ESP32::instESP32 = NULL;
 
@@ -965,4 +969,5 @@ int8_t ESP32::get_wifi_status() const
 {
     return _wifi_status;
 }
+#endif
 
