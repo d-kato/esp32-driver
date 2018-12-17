@@ -21,6 +21,7 @@
 #if DEVICE_SERIAL && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_PRESENT)
 #include <vector>
 #include <stdint.h>
+#include <stdlib.h>
 #include "drivers/DigitalOut.h"
 #include "drivers/SerialBase.h"
 #include "drivers/UARTSerial.h"
