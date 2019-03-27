@@ -20,7 +20,7 @@
 
 // ESP32Stack implementation
 ESP32Stack::ESP32Stack(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
-    PinName rts, PinName cts, int baudrate)
+    PinName rts, PinName cts, int baudrate, int is_ap) : _is_ap(is_ap)
 {
     _esp = ESP32::getESP32Inst(en, io0, tx, rx, debug, rts, cts, baudrate);
     memset(_local_ports, 0, sizeof(_local_ports));
@@ -57,6 +57,7 @@ int ESP32Stack::socket_open(void **handle, nsapi_protocol_t proto)
     socket->accept_id = false;
     socket->tcp_server = false;
     *handle = socket;
+    _local_ports[socket->id] = 0;
     return 0;
 }
 
@@ -90,22 +91,30 @@ int ESP32Stack::socket_bind(void *handle, const SocketAddress &address)
         return NSAPI_ERROR_NO_SOCKET;
     }
 
-    if (socket->proto == NSAPI_UDP) {
-        if(address.get_addr().version != NSAPI_UNSPEC) {
-            return NSAPI_ERROR_UNSUPPORTED;
-        }
-
-        for(int id = 0; id < ESP32::SOCKET_COUNT; id++) {
-            if(_local_ports[id] == address.get_port() && id != socket->id) { // Port already reserved by another socket
+    if (address.get_ip_address() != NULL) {
+        if (_is_ap == 0) {
+            if (strncmp(address.get_ip_address(), _esp->getIPAddress(), NSAPI_IPv6_SIZE) != 0) {
                 return NSAPI_ERROR_PARAMETER;
-            } else if (id == socket->id && socket->connected) {
+            }
+        } else {
+            if (strncmp(address.get_ip_address(), _esp->getIPAddress_ap(), NSAPI_IPv6_SIZE) != 0) {
                 return NSAPI_ERROR_PARAMETER;
             }
         }
-        _local_ports[socket->id] = address.get_port();
-        return 0;
     }
 
+    if(address.get_addr().version != NSAPI_UNSPEC) {
+        return NSAPI_ERROR_UNSUPPORTED;
+    }
+
+    for(int id = 0; id < ESP32::SOCKET_COUNT; id++) {
+        if(_local_ports[id] == address.get_port() && id != socket->id) { // Port already reserved by another socket
+            return NSAPI_ERROR_PARAMETER;
+        } else if (id == socket->id && socket->connected) {
+            return NSAPI_ERROR_PARAMETER;
+        }
+    }
+    _local_ports[socket->id] = address.get_port();
     socket->addr = address;
     return 0;
 }
@@ -204,10 +213,6 @@ int ESP32Stack::socket_recv(void *handle, void *data, unsigned size)
     int32_t recv = _esp->recv(socket->id, data, size);
     if (recv == -1) {
         return NSAPI_ERROR_WOULD_BLOCK;
-    } else if (recv < 0) {
-        return NSAPI_ERROR_NO_SOCKET;
-    } else {
-        // do nothing
     }
 
     return recv;

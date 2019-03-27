@@ -19,8 +19,9 @@
 
 // ESP32Interface implementation
 ESP32Interface::ESP32Interface() :
-    ESP32Stack(MBED_CONF_ESP32_WIFI_EN, MBED_CONF_ESP32_WIFI_IO0, MBED_CONF_ESP32_WIFI_TX, MBED_CONF_ESP32_WIFI_RX, MBED_CONF_ESP32_WIFI_DEBUG, MBED_CONF_ESP32_WIFI_RTS, MBED_CONF_ESP32_WIFI_CTS, MBED_CONF_ESP32_WIFI_BAUDRATE),
-     _dhcp(true),
+    ESP32Stack(MBED_CONF_ESP32_WIFI_EN, MBED_CONF_ESP32_WIFI_IO0, MBED_CONF_ESP32_WIFI_TX, MBED_CONF_ESP32_WIFI_RX, MBED_CONF_ESP32_WIFI_DEBUG,
+               MBED_CONF_ESP32_WIFI_RTS, MBED_CONF_ESP32_WIFI_CTS, MBED_CONF_ESP32_WIFI_BAUDRATE, 0),
+    _dhcp(true),
     _ap_ssid(),
     _ap_pass(),
     _ap_sec(NSAPI_SECURITY_NONE),
@@ -30,13 +31,14 @@ ESP32Interface::ESP32Interface() :
     _connection_status(NSAPI_STATUS_DISCONNECTED),
     _connection_status_cb(NULL)
 {
+    memset(_ap_ssid, 0, sizeof(_ap_ssid));
     _esp->attach_wifi_status(callback(this, &ESP32Interface::wifi_status_cb));
 }
 
 ESP32Interface::ESP32Interface(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate) :
-    ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate),
-     _dhcp(true),
+    ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate, 0),
+    _dhcp(true),
     _ap_ssid(),
     _ap_pass(),
     _ap_sec(NSAPI_SECURITY_NONE),
@@ -46,12 +48,13 @@ ESP32Interface::ESP32Interface(PinName en, PinName io0, PinName tx, PinName rx, 
     _connection_status(NSAPI_STATUS_DISCONNECTED),
     _connection_status_cb(NULL)
 {
+    memset(_ap_ssid, 0, sizeof(_ap_ssid));
     _esp->attach_wifi_status(callback(this, &ESP32Interface::wifi_status_cb));
 }
 
 ESP32Interface::ESP32Interface(PinName tx, PinName rx, bool debug) :
-    ESP32Stack(NC, NC, tx, rx, debug, NC, NC, 230400),
-     _dhcp(true),
+    ESP32Stack(NC, NC, tx, rx, debug, NC, NC, 230400, 0),
+    _dhcp(true),
     _ap_ssid(),
     _ap_pass(),
     _ap_sec(NSAPI_SECURITY_NONE),
@@ -61,6 +64,7 @@ ESP32Interface::ESP32Interface(PinName tx, PinName rx, bool debug) :
     _connection_status(NSAPI_STATUS_DISCONNECTED),
     _connection_status_cb(NULL)
 {
+    memset(_ap_ssid, 0, sizeof(_ap_ssid));
     _esp->attach_wifi_status(callback(this, &ESP32Interface::wifi_status_cb));
 }
 
@@ -92,12 +96,19 @@ int ESP32Interface::connect(const char *ssid, const char *pass, nsapi_security_t
         return NSAPI_ERROR_UNSUPPORTED;
     }
 
-    set_credentials(ssid, pass, security);
+    int ret = set_credentials(ssid, pass, security);
+    if (ret != NSAPI_ERROR_OK) {
+        return ret;
+    }
     return connect();
 }
 
 int ESP32Interface::connect()
 {
+    if (_ap_ssid[0] == 0) {
+        return NSAPI_ERROR_NO_SSID;
+    }
+
     if (!_esp->dhcp(_dhcp, 1)) {
         return NSAPI_ERROR_DHCP_FAILURE;
     }
@@ -119,15 +130,60 @@ int ESP32Interface::connect()
 
 int ESP32Interface::set_credentials(const char *ssid, const char *pass, nsapi_security_t security)
 {
+    int ret = NSAPI_ERROR_OK;
+    size_t pass_len;
+
+    if ((ssid == NULL) || (ssid[0] == 0)) {
+        return NSAPI_ERROR_PARAMETER;
+    }
+
+    if ((pass == NULL) || (pass[0] == 0)) {
+        pass_len = 0;
+    } else {
+        pass_len = strlen(pass);
+    }
+
+    switch (security) {
+        case NSAPI_SECURITY_NONE:
+            if (pass_len != 0) {
+                ret = NSAPI_ERROR_PARAMETER;
+            }
+            break;
+        case NSAPI_SECURITY_WEP:
+            if ((pass_len < 5) || (pass_len > 26)) {
+                ret = NSAPI_ERROR_PARAMETER;
+            }
+            break;
+        case NSAPI_SECURITY_WPA:
+        case NSAPI_SECURITY_WPA2:
+        case NSAPI_SECURITY_WPA_WPA2:
+            if ((pass_len < 8) || (pass_len > 63)) {
+                ret = NSAPI_ERROR_PARAMETER;
+            }
+            break;
+        case NSAPI_SECURITY_UNKNOWN:
+            // do nothing
+            break;
+        default:
+            ret = NSAPI_ERROR_UNSUPPORTED;
+            break;
+    }
+
+    if (ret != NSAPI_ERROR_OK) {
+        return ret;
+    }
+
     memset(_ap_ssid, 0, sizeof(_ap_ssid));
     strncpy(_ap_ssid, ssid, sizeof(_ap_ssid));
 
     memset(_ap_pass, 0, sizeof(_ap_pass));
-    strncpy(_ap_pass, pass, sizeof(_ap_pass));
+    if (pass_len != 0) {
+        strncpy(_ap_pass, pass, pass_len);
+    }
 
     _ap_sec = security;
 
-    return 0;
+    return NSAPI_ERROR_OK;
 }
 
 int ESP32Interface::set_channel(uint8_t channel)
@@ -137,6 +193,10 @@ int ESP32Interface::set_channel(uint8_t channel)
 
 int ESP32Interface::disconnect()
 {
+    if (_connection_status == NSAPI_STATUS_DISCONNECTED) {
+        return NSAPI_ERROR_NO_CONNECTION;
+    }
+
     if (!_esp->disconnect()) {
         return NSAPI_ERROR_DEVICE_ERROR;
     }

@@ -36,9 +36,10 @@ protected:
      * @param rts       RTS pin
      * @param cts       CTS pin
      * @param baudrate  The baudrate of the serial port.
+     * @param is_ap     0:Terminal 1:Access point.
      */
     ESP32Stack(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
-               PinName rts, PinName cts, int baudrate);
+               PinName rts, PinName cts, int baudrate, int is_ap);
 
 protected:
     /** Open a socket
@@ -172,6 +173,7 @@ protected:
 protected:
     ESP32 *_esp;
     uint16_t _local_ports[ESP32::SOCKET_COUNT];
+    int _is_ap;
 };
 
 #endif

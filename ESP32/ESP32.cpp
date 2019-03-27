@@ -605,9 +605,9 @@ bool ESP32::open(const char *type, int id, const char* addr, int port, int opt)
 
     _smutex.lock();
     startup();
-    setTimeout(500);
+    setTimeout(ESP32_SEND_TIMEOUT);
     if (opt != 0) {
-        ret = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d, %d", id, type, addr, port, opt)
+        ret = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d,%d", id, type, addr, port, opt)
            && _parser.recv("OK");
     } else {
         ret = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d", id, type, addr, port)
@@ -739,8 +739,8 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
                 q->len -= amount;
                 q->index += amount;
                 idx += amount;
-                break;
             }
+            break;
         } else {
             p = &(*p)->next;
         }
@@ -750,7 +750,7 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
     if (idx > 0) {
         return idx;
     } else if (((_id_bits & (1 << id)) == 0) || ((_id_bits_close & (1 << id)) != 0)) {
-        return -2;
+        return 0;
     } else {
         return -1;
     }

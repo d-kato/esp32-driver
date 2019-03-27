@@ -20,7 +20,7 @@
 // ESP32InterfaceAP implementation
 ESP32InterfaceAP::ESP32InterfaceAP(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate) :
-    ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate),
+    ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate, 1),
     _dhcp(true),
     _own_ch(1),
     _own_ssid(),
@@ -35,7 +35,7 @@ ESP32InterfaceAP::ESP32InterfaceAP(PinName en, PinName io0, PinName tx, PinName 
 }
 
 ESP32InterfaceAP::ESP32InterfaceAP(PinName tx, PinName rx, bool debug) :
-    ESP32Stack(NC, NC, tx, rx, debug, NC, NC, 230400),
+    ESP32Stack(NC, NC, tx, rx, debug, NC, NC, 230400, 1),
     _dhcp(true),
     _own_ch(1),
     _own_ssid(),
