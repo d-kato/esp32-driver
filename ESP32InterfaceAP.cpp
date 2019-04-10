@@ -18,6 +18,22 @@
 #include "ESP32InterfaceAP.h"
 
 // ESP32InterfaceAP implementation
+ESP32InterfaceAP::ESP32InterfaceAP() :
+    ESP32Stack(MBED_CONF_ESP32_WIFI_EN, MBED_CONF_ESP32_WIFI_IO0, MBED_CONF_ESP32_WIFI_TX, MBED_CONF_ESP32_WIFI_RX, MBED_CONF_ESP32_WIFI_DEBUG,
+               MBED_CONF_ESP32_WIFI_RTS, MBED_CONF_ESP32_WIFI_CTS, MBED_CONF_ESP32_WIFI_BAUDRATE, 1),
+    _dhcp(true),
+    _own_ch(1),
+    _own_ssid(),
+    _own_pass(),
+    _own_sec(NSAPI_SECURITY_NONE),
+    _ip_address(),
+    _netmask(),
+    _gateway(),
+    _connection_status(NSAPI_STATUS_DISCONNECTED),
+    _connection_status_cb(NULL)
+{
+}
+
 ESP32InterfaceAP::ESP32InterfaceAP(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate) :
     ESP32Stack(en, io0, tx, rx, debug, rts, cts, baudrate, 1),

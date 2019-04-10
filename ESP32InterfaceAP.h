@@ -28,6 +28,11 @@ class ESP32InterfaceAP : public ESP32Stack, public WiFiInterface
 {
 public:
     /** ESP32InterfaceAP lifetime
+     * Configuration defined in mbed_lib.json
+     */
+    ESP32InterfaceAP();
+
+    /** ESP32InterfaceAP lifetime
      * @param en        EN pin  (If not used this pin, please set "NC")
      * @param io0       IO0 pin (If not used this pin, please set "NC")
      * @param tx        TX pin
