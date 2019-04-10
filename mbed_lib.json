@@ -53,6 +53,14 @@
             "esp32.wifi-io0": "P3_9",
             "esp32.wifi-tx" : "P2_14",
             "esp32.wifi-rx" : "P2_15"
+        },
+        "SEMB1402": {
+            "esp32.wifi-en" : "PH_6",
+            "esp32.wifi-tx" : "PF_5",
+            "esp32.wifi-rx" : "PF_4",
+            "esp32.wifi-rts": "PF_6",
+            "esp32.wifi-cts": "PH_2",
+            "esp32.provide-default": true
         }
-     }
+    }
 }
