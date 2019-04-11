@@ -633,8 +633,8 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
     }
 
     //May take a second try if device is busy
-    _smutex.lock();
     while (error_cnt < 2) {
+        _smutex.lock();
         if (((_id_bits & (1 << id)) == 0)
          || ((_id_bits_close & (1 << id)) != 0)) {
             _smutex.unlock();
@@ -651,19 +651,18 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
            && (_parser.write((char*)data + index, (int)send_size) >= 0)
            && _parser.recv("SEND OK");
         setTimeout();
+        _smutex.unlock();
         if (ret) {
             amount -= send_size;
             index += send_size;
             error_cnt = 0;
             if (amount == 0) {
-                _smutex.unlock();
                 return true;
             }
         } else {
             error_cnt++;
         }
     }
-    _smutex.unlock();
 
     return false;
 }
