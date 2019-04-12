@@ -641,8 +641,8 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
             return false;
         }
         send_size = amount;
-        if (send_size > 2048) {
-            send_size = 2048;
+        if (send_size > 512) {
+            send_size = 512;
         }
         startup();
         setTimeout(ESP32_SEND_TIMEOUT);
