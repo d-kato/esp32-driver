@@ -61,7 +61,7 @@
             "esp32.wifi-rts": "PF_6",
             "esp32.wifi-cts": "PH_2",
             "esp32.provide-default": true,
-            "esp32.wifi-baudrate":1000000
+            "esp32.wifi-baudrate":1152000
         }
     }
 }
