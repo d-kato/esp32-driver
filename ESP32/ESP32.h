@@ -258,7 +258,8 @@ public:
 private:
     mbed::DigitalOut * _p_wifi_en;
     mbed::DigitalOut * _p_wifi_io0;
-    bool init_end;
+    bool _init_end_common;
+    bool _init_end_wifi;
     mbed::UARTSerial _serial;
     mbed::ATCmdParser _parser;
     struct packet {
@@ -292,7 +293,8 @@ private:
         int  Notified;
     } _cbs[SOCKET_COUNT];
 
-    bool startup();
+    void _startup_common();
+    bool _startup_wifi();
     bool reset(void);
     void debugOn(bool debug);
     void socket_handler(bool connect, int id);
@@ -323,4 +325,4 @@ private:
     char _mac_buffer_ap[18];
 };
 #endif
-#endif
+#endif /* ESP32_H */

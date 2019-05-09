@@ -49,7 +49,7 @@ ESP32 * ESP32::getESP32Inst(bool debug)
 
 ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate)
-    : _p_wifi_en(NULL), _p_wifi_io0(NULL), init_end(false)
+    : _p_wifi_en(NULL), _p_wifi_io0(NULL), _init_end_common(false), _init_end_wifi(false)
     , _serial(tx, rx, ESP32_DEFAULT_BAUD_RATE), _parser(&_serial, "\r\n")
     , _packets(0), _packets_end(&_packets)
     , _id_bits(0), _id_bits_close(0), _server_act(false)
@@ -162,12 +162,13 @@ bool ESP32::get_version_info(char * ver_info, int buf_size)
     return true;
 }
 
-bool ESP32::startup()
+void ESP32::_startup_common()
 {
-    if (init_end) {
-        return true;
+    if (_init_end_common) {
+        return;
     }
 
+    _serial.set_baud(ESP32_DEFAULT_BAUD_RATE);
     if (_p_wifi_io0 != NULL) {
         _p_wifi_io0->write(1);
     }
@@ -182,6 +183,20 @@ bool ESP32::startup()
     }
 
     reset();
+
+    _init_end_common = true;
+
+    return;
+}
+
+bool ESP32::_startup_wifi()
+{
+    _startup_common();
+
+    if (_init_end_wifi) {
+        return true;
+    }
+
     bool success = _parser.send("AT+CWMODE=%d", _wifi_mode)
                 && _parser.recv("OK")
                 && _parser.send("AT+CIPMUX=1")
@@ -191,7 +206,7 @@ bool ESP32::startup()
                 && _parser.send("AT+CWQAP")
                 && _parser.recv("OK");
     if (success) {
-        init_end = true;
+        _init_end_wifi = true;
     }
 
     return success;
@@ -199,17 +214,20 @@ bool ESP32::startup()
 
 bool ESP32::restart()
 {
-    bool success;
+    bool success = true;;
+    bool ret;
 
     _smutex.lock();
-    if (!init_end) {
-        success = startup();
-    } else {
-        reset();
-        success = _parser.send("AT+CWMODE=%d", _wifi_mode)
-               && _parser.recv("OK")
-               && _parser.send("AT+CIPMUX=1")
-               && _parser.recv("OK");
+    setTimeout();
+    reset();
+    if (_init_end_wifi) {
+        ret = _parser.send("AT+CWMODE=%d", _wifi_mode)
+           && _parser.recv("OK")
+           && _parser.send("AT+CIPMUX=1")
+           && _parser.recv("OK");
+        if (!ret) {
+            success = false;
+        }
     }
     _smutex.unlock();
 
@@ -224,7 +242,9 @@ bool ESP32::set_mode(int mode)
     }
     if (_wifi_mode != mode) {
         _wifi_mode = mode;
-        return restart();
+        if (_init_end_wifi) {
+            return restart();
+        }
     }
     return true;
 }
@@ -235,7 +255,7 @@ bool ESP32::cre_server(int port)
         return false;
     }
     _smutex.lock();
-    startup();
+    _startup_wifi();
     if (!(_parser.send("AT+CIPSERVER=1,%d", port)
         && _parser.recv("OK"))) {
         _smutex.unlock();
@@ -249,7 +269,7 @@ bool ESP32::cre_server(int port)
 bool ESP32::del_server()
 {
     _smutex.lock();
-    startup();
+    _startup_wifi();
     if (!(_parser.send("AT+CIPSERVER=0")
         && _parser.recv("OK"))) {
         _smutex.unlock();
@@ -291,7 +311,7 @@ bool ESP32::accept(int * p_id)
         }
 
         _smutex.lock();
-        startup();
+        _startup_wifi();
         if (!_accept_id.empty()) {
             ret = true;
         } else {
@@ -383,7 +403,7 @@ bool ESP32::dhcp(bool enabled, int mode)
     }
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     bool done = _parser.send("AT+CWDHCP=%d,%d", enabled?1:0, mode)
        && _parser.recv("OK");
     _smutex.unlock();
@@ -398,7 +418,7 @@ bool ESP32::connect(const char *ap, const char *passPhrase)
     _wifi_status = STATUS_DISCONNECTED;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
 
     setTimeout(ESP32_CONNECT_TIMEOUT);
     ret = _parser.send("AT+CWJAP=\"%s\",\"%s\"", ap, passPhrase)
@@ -413,7 +433,7 @@ bool ESP32::config_soft_ap(const char *ap, const char *passPhrase, uint8_t chl, 
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CWSAP=\"%s\",\"%s\",%hhu,%hhu", ap, passPhrase, chl, ecn)
        && _parser.recv("OK");
     _smutex.unlock();
@@ -425,7 +445,7 @@ bool ESP32::get_ssid(char *ap)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CWJAP?")
        && _parser.recv("+CWJAP:\"%33[^\"]\",", ap)
        && _parser.recv("OK");
@@ -438,7 +458,7 @@ bool ESP32::disconnect(void)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CWQAP") && _parser.recv("OK");
     _smutex.unlock();
     return ret;
@@ -449,7 +469,7 @@ const char *ESP32::getIPAddress(void)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIFSR")
        && _parser.recv("+CIFSR:STAIP,\"%15[^\"]\"", _ip_buffer)
        && _parser.recv("OK");
@@ -465,7 +485,7 @@ const char *ESP32::getIPAddress_ap(void)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIFSR")
        && _parser.recv("+CIFSR:APIP,\"%15[^\"]\"", _ip_buffer_ap)
        && _parser.recv("OK");
@@ -481,7 +501,7 @@ const char *ESP32::getMACAddress(void)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIFSR")
        && _parser.recv("+CIFSR:STAMAC,\"%17[^\"]\"", _mac_buffer)
        && _parser.recv("OK");
@@ -498,7 +518,7 @@ const char *ESP32::getMACAddress_ap(void)
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIFSR")
        && _parser.recv("+CIFSR:APMAC,\"%17[^\"]\"", _mac_buffer_ap)
        && _parser.recv("OK");
@@ -515,7 +535,7 @@ const char *ESP32::getGateway()
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIPSTA?")
        && _parser.recv("+CIPSTA:gateway:\"%15[^\"]\"", _gateway_buffer)
        && _parser.recv("OK");
@@ -532,7 +552,7 @@ const char *ESP32::getGateway_ap()
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIPAP?")
        && _parser.recv("+CIPAP:gateway:\"%15[^\"]\"", _gateway_buffer_ap)
        && _parser.recv("OK");
@@ -549,7 +569,7 @@ const char *ESP32::getNetmask()
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIPSTA?")
        && _parser.recv("+CIPSTA:netmask:\"%15[^\"]\"", _netmask_buffer)
        && _parser.recv("OK");
@@ -566,7 +586,7 @@ const char *ESP32::getNetmask_ap()
     bool ret;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CIPAP?")
        && _parser.recv("+CIPAP:netmask:\"%15[^\"]\"", _netmask_buffer_ap)
        && _parser.recv("OK");
@@ -586,7 +606,7 @@ int8_t ESP32::getRSSI()
     char bssid[18];
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     ret = _parser.send("AT+CWJAP?")
        && _parser.recv("+CWJAP:\"%32[^\"]\",\"%17[^\"]\"", ssid, bssid)
        && _parser.recv("OK");
@@ -612,9 +632,9 @@ int ESP32::scan(WiFiAccessPoint *res, unsigned limit)
     unsigned cnt = 0;
     nsapi_wifi_ap_t ap;
 
-    if (!init_end) {
+    if (!_init_end_wifi) {
         _smutex.lock();
-        startup();
+        _startup_wifi();
         _smutex.unlock();
         ThisThread::sleep_for(1500);
     }
@@ -660,7 +680,7 @@ bool ESP32::open(const char *type, int id, const char* addr, int port, int opt)
     _cbs[id].Notified = 0;
 
     _smutex.lock();
-    startup();
+    _startup_wifi();
     setTimeout(ESP32_SEND_TIMEOUT);
     if (opt != 0) {
         ret = _parser.send("AT+CIPSTART=%d,\"%s\",\"%s\",%d,%d", id, type, addr, port, opt)
@@ -700,7 +720,7 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
         if (send_size > 512) {
             send_size = 512;
         }
-        startup();
+        _startup_wifi();
         setTimeout(ESP32_SEND_TIMEOUT);
         ret = _parser.send("AT+CIPSEND=%d,%d", id, send_size)
            && _parser.recv(">")
@@ -845,7 +865,7 @@ bool ESP32::close(int id, bool wait_close)
                 _smutex.unlock();
                 return true;
             }
-            startup();
+            _startup_wifi();
             setTimeout(500);
             _parser.process_oob(); // Poll for inbound packets
             setTimeout();
@@ -863,7 +883,7 @@ bool ESP32::close(int id, bool wait_close)
             _smutex.unlock();
             return true;
         }
-        startup();
+        _startup_wifi();
         setTimeout(500);
         if (_parser.send("AT+CIPCLOSE=%d", id)
             && _parser.recv("OK")) {
