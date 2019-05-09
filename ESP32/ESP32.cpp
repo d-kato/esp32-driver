@@ -1447,6 +1447,23 @@ bool ESP32::ble_notifies_characteristic(int srv_index, int char_index, const uin
     return true;
 }
 
+bool ESP32::ble_set_scan_param(int scan_type, int own_addr_type, int filter_policy, int scan_interval, int scan_window)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    ret = _parser.send("AT+BLESCANPARAM=%d,%d,%d,%d,%d",
+                       scan_type, own_addr_type, filter_policy, scan_interval, scan_window)
+       && _parser.recv("OK");
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
 bool ESP32::ble_start_scan(int interval)
 {
     bool ret;

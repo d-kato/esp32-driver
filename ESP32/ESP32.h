@@ -532,6 +532,20 @@ public:
      */
     bool ble_notifies_characteristic(int srv_index, int char_index, const uint8_t * data, int len);
 
+    /** Sets Parameters of BLE Scanning
+     *
+     *  @param scan_type     0: passive scan  1: active scan
+     *  @param own_addr_type 0: public address  1: random address  2: RPA public address  3: RPA random address
+     *  @param filter_policy 0: BLE_SCAN_FILTER_ALLOW_ALL
+     *                       1: BLE_SCAN_FILTER_ALLOW_ONLY_WLST
+     *                       2: BLE_SCAN_FILTER_ALLOW_UND_RPA_DIR
+     *                       3: BLE_SCAN_FILTER_ALLOW_WLIST_PRA_DIR
+     *  @param scan_interval scan interval
+     *  @param scan_window   scan window
+     *  @return              rue: success, false: failure
+     */
+    bool ble_set_scan_param(int scan_type, int own_addr_type, int filter_policy, int scan_interval, int scan_window);
+
     /** Enables BLE Scanning
      *
      *  @param interval     0: scanning is continuous
