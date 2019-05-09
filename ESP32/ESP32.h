@@ -323,6 +323,414 @@ private:
     char _gateway_buffer_ap[16];
     char _netmask_buffer_ap[16];
     char _mac_buffer_ap[18];
+
+#if defined(TARGET_ESP32AT_BLE)
+public:
+    typedef struct {
+        int      srv_index;          /**< service's index starting from 1 */
+        int      char_index;         /**< characteristic's index starting from 1 */
+        int      desc_index;         /**< descriptor's index */
+        void *   data;               /**< data buffer address */
+        uint32_t len;                /**< data len */
+    } ble_packet_t;
+
+    typedef union {
+        const uint8_t * addr;        /**< buffer address */
+        uint32_t        data;        /**< data */
+    } union_data_t;
+
+    typedef struct {
+        union_data_t uuid;           /**< UUID value */
+        uint8_t      uuid_type;      /**< UUID type  0: addr 1:data */
+        uint16_t     uuid_size;      /**< UUID size */
+        uint16_t     val_max_len;    /**< max allow value length (the max length when you dynamic set value) */
+        union_data_t value;          /**< initial value */
+        uint8_t      value_type;     /**< initial value  type 0: addr 1:data */
+        uint16_t     value_size;     /**< initial value size */
+        uint8_t      permissions;    /**< permission (refer to BLE Spec for definition) */
+    } gatt_service_t;
+
+    typedef struct {
+        uint16_t  adv_int_min;       /**< minimum value of advertising interval; range: 0x0020 ~ 0x4000 */
+        uint16_t  adv_int_max;       /**< maximum value of advertising interval; range: 0x0020 ~ 0x4000 */
+        uint8_t   adv_type;          /**< 0：ADV_TYPE_IND, 2：ADV_TYPE_SCAN_IND, 3：ADV_TYPE_NONCONN_IND */
+        uint8_t   own_addr_type;     /**< own BLE address type; 0：BLE_ADDR_TYPE_PUBLIC, 1：BLE_ADDR_TYPE_RANDOM */
+        uint8_t   channel_map;       /**< channel of advertising; ADV_CHNL_~ */
+        uint8_t   adv_filter_policy; /**< filter policy of advertising; ADV_FILTER_ALLOW_SCAN_~ */
+        uint8_t   peer_addr_type;    /**< remote BLE address type; 0：PUBLIC, 1：RANDOM */
+        uint8_t   peer_addr[6];      /**< remote BLE address */
+    } advertising_param_t;
+
+    typedef struct {
+        uint8_t   addr[6];           /**< BLE address */
+        int8_t    rssi;              /**< signal strength */
+        uint8_t   adv_data[31];      /**< advertising data */
+        uint8_t   adv_data_len;      /**< advertising data length */
+        uint8_t   scan_rsp_data[31]; /**< scan response data */
+        uint8_t   scan_rsp_data_len; /**< scan response data length */
+        uint8_t   addr_type;         /**< the address type of broadcasters */
+    } ble_scan_t;
+
+    typedef struct {
+        int      srv_index;          /**< service's index starting from 1 */
+        uint16_t srv_uuid;           /**< service's UUID */
+        int      srv_type;           /**< service's type */
+    } ble_primary_service_t;
+
+    typedef struct {
+        int      srv_index;          /**< service's index starting from 1 */
+        uint16_t srv_uuid;           /**< service's UUID */
+        int      srv_type;           /**< service's type */
+    } ble_characteristics_t;
+
+    typedef struct {
+        int      char_index;         /**< Characteristic's index starting from 1 */
+        uint16_t char_uuid;          /**< Characteristic's UUID */
+        uint8_t  char_prop;          /**< Characteristic's properties */
+    } ble_discovers_char_t;
+
+    typedef struct {
+        int      char_index;         /**< Characteristic's index starting from 1 */
+        int      desc_index;         /**< Descriptor's index */
+        uint16_t desc_uuid;          /**< Descriptor's UUID */
+    } ble_discovers_desc_t;
+
+    // advertising_param_t:adv_type
+    #define ADV_TYPE_IND           0
+    #define ADV_TYPE_SCAN_IND      2
+    #define ADV_TYPE_NONCONN_IND   3
+
+    // advertising_param_t:own_addr_type and peer_addr_type
+    #define BLE_ADDR_TYPE_PUBLIC   0
+    #define BLE_ADDR_TYPE_RANDOM   1
+
+    // advertising_param_t:channel_map
+    #define ADV_CHNL_37            0x01
+    #define ADV_CHNL_38            0x02
+    #define ADV_CHNL_39            0x04
+    #define ADV_CHNL_ALL           0x07
+
+    // advertising_param_t:adv_filter_policy
+    #define ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY    0
+    #define ADV_FILTER_ALLOW_SCAN_WLST_CON_ANY   1
+    #define ADV_FILTER_ALLOW_SCAN_ANY_CON_WLST   2
+    #define ADV_FILTER_ALLOW_SCAN_WLST_CON_WLST  3
+
+    // ble_set_role: role
+    #define INIT_CLIENT_ROLE       1
+    #define INIT_SERVER_ROLE       2
+
+    /** Sets BLE Role
+     *
+     *  @param role         INIT_CLIENT_ROLE: client role, INIT_SERVER_ROLE: server role
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_role(int role);
+
+    /** Gets BLE Role
+     *
+     *  @param role         INIT_CLIENT_ROLE: client role, INIT_SERVER_ROLE: server role
+     *  @return             true: success, false: failure
+     */
+    bool ble_get_role(int * role);
+
+    /** Sets BLE Device's Name
+     *
+     *  @param name         The BLE device name
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_device_name(const char * name);
+
+    /** Gets BLE Device's Name
+     *
+     *  @param name         The BLE device name
+     *  @return             true: success, false: failure
+     */
+    bool ble_get_device_name(char * name);
+
+    /** GATTS Creates and Starts Services
+     *
+     *  @return             true: success, false: failure
+     */
+    bool ble_start_services();
+
+    /** Sets BLE Scan Response
+     *
+     *  @param data         Scan response data
+     *  @param len          Data len
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_scan_response(const uint8_t * data, int len);
+
+    /** Starts Advertising
+     *
+     *  @return             true: success, false: failure
+     */
+    bool ble_start_advertising();
+
+    /** Stops Advertising
+     *
+     *  @return             true: success, false: failure
+     */
+    bool ble_stop_advertising();
+
+    /** Sets BLE Device's Address
+     *
+     *  @param addr_type    0: public address, 1: random address
+     *  @param addr         Random address data. Valid only when addr_type is 1.
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_addr(int addr_type, const uint8_t * random_addr = NULL);
+
+    /** Gets BLE Device's Address
+     *
+     *  @param public_addr  BLE public address
+     *  @return             true: success, false: failure
+     */
+    bool ble_get_addr(uint8_t * public_addr);
+
+    /** Sets Parameters of Advertising
+     *
+     *  @param param        Parameters. See advertising_param_t.
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_advertising_param(const advertising_param_t * param);
+
+    /** Sets Advertising Data
+     *
+     *  @param data         Advertising data
+     *  @param len          Data len
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_advertising_data(const uint8_t * data, int len);
+
+    /** GATT Sets Service
+     *
+     *  @param service_list GATT service list. see gatt_service_t.
+     *  @param num          Number of GATT service list
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_service(const gatt_service_t * service_list, int num);
+
+    /** GATTS Sets Characteristic
+     *
+     *  @param srv_index    Service's index starting from 1
+     *  @param char_index   Characteristic's index starting from 1
+     *  @param data         Data buffer address
+     *  @param len          Data len
+     *  @return             true: success, false: failure
+     */
+    bool ble_set_characteristic(int srv_index, int char_index, const uint8_t * data, int len);
+
+    /** GATTS Notifies of Characteristics
+     *
+     *  @param srv_index    Service's index starting from 1
+     *  @param char_index   Characteristic's index starting from 1
+     *  @param data         Data buffer address
+     *  @param len          Data len
+     *  @return             true: success, false: failure
+     */
+    bool ble_notifies_characteristic(int srv_index, int char_index, const uint8_t * data, int len);
+
+    /** Enables BLE Scanning
+     *
+     *  @param interval     0: scanning is continuous
+     *                      !0: scanning should last for <interval> seconds and then stop automatically
+     *  @return             true: success, false: failure
+     */
+    bool ble_start_scan(int interval = 0);
+
+    /** Disables BLE scan
+     *
+     *  @return             true: success, false: failure
+     */
+    bool ble_stop_scan();
+
+    /** Establishes BLE connection
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param remote_addr  Remote BLE address
+     *  @return             true: success, false: failure
+     */
+    bool ble_connect(int conn_index, const uint8_t * remote_addr);
+
+    /** Ends BLE connection
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @return             true: success, false: failure
+     */
+    bool ble_disconnect(int conn_index);
+
+    /** GATTC Discovers Primary Services
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param service      Service info
+     *  @param num          Number of service info
+     *  @return             true: success, false: failure
+     */
+    bool ble_discovery_service(int conn_index, ble_primary_service_t * service, int * num);
+
+    /** GATTC Discovers Characteristics
+     *
+     *  @param conn_index     Index of BLE connection; only 0 is supported for the single connection right now,
+     *                        but multiple BLE connections will be supported in the future.
+     *  @param srv_index      Service's index. It can be fetched with "ble_discovery_service()"
+     *  @param discovers_char Characteristic info
+     *  @param char_num       Number of characteristic info
+     *  @param discovers_desc Descriptor info
+     *  @param desc_num       Number of descriptor info
+     *  @return               true: success, false: failure
+     */
+    bool ble_discovery_characteristics(
+             int conn_index, int srv_index,
+             ble_discovers_char_t * discovers_char, int * char_num,
+             ble_discovers_desc_t * discovers_desc, int * desc_num
+         );
+
+    /** GATTC Reads a Characteristic
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param srv_index    Service's index. It can be fetched with "ble_discovery_service()"
+     *  @param char_index   Characteristic's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param data         Read data buffer
+     *  @param amount       Amount of bytes to be received
+     *  @return             Data size of received
+     */
+    int32_t ble_read_characteristic(int conn_index, int srv_index, int char_index, uint8_t * data, int amount);
+
+    /** GATTC Reads a Descriptor
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param srv_index    Service's index. It can be fetched with "ble_discovery_service()"
+     *  @param char_index   Characteristic's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param desc_index   Descriptor's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param data         Read data buffer
+     *  @param amount       Amount of bytes to be received
+     *  @return             true: success, false: failure
+     */
+    int32_t ble_read_descriptor(int conn_index, int srv_index, int char_index, int desc_index, uint8_t * data, int amount);
+
+    /** GATTC Writes Characteristic
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param srv_index    Service's index. It can be fetched with "ble_discovery_service()"
+     *  @param char_index   Characteristic's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param data         Write data buffer
+     *  @param amount       Amount of data to be written
+     *  @return             true: success, false: failure
+     */
+    bool ble_write_characteristic(int conn_index, int srv_index, int char_index, const uint8_t * data, int amount);
+
+    /** GATTC Writes Descriptor
+     *
+     *  @param conn_index   Index of BLE connection; only 0 is supported for the single connection right now,
+     *                      but multiple BLE connections will be supported in the future.
+     *  @param srv_index    Service's index. It can be fetched with "ble_discovery_service()"
+     *  @param char_index   Characteristic's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param desc_index   Descriptor's index. It can be fetched with "ble_discovery_characteristics()"
+     *  @param data         Write data buffer
+     *  @param amount       Amount of data to be written
+     *  @return             true: success, false: failure
+     */
+    bool ble_write_descriptor(int conn_index, int srv_index, int char_index, int desc_index, const uint8_t * data, int amount);
+
+    /** For executing OOB processing on background
+     *
+     *  @param timeout      AT parser receive timeout
+     *  @param all          if TRUE, process all OOBs instead of only one
+     */
+    void ble_process_oob(uint32_t timeout, bool all);
+
+    /** Register a callback on state change.
+     *
+     *  The specified callback will be called on state changes.
+     *
+     *  The callback may be called in an interrupt context and should not
+     *  perform expensive operations.
+     *
+     *  Note! This is not intended as an attach-like asynchronous api, but rather
+     *  as a building block for constructing  such functionality.
+     *
+     *  The exact timing of when the registered function
+     *  is called is not guaranteed and susceptible to change. It should be used
+     *  as a cue to make ble_process_oobl calls to find the current state.
+     *
+     *  @param cb_func      function to call on state change
+     */
+    void ble_attach_sigio(mbed::Callback<void()> cb_func);
+
+    /**
+     * Attach a function to call whenever the BLE connection establishes
+     *
+     * @param cb_func       Pointer to the function to be calledt
+     *                      cb_func argument  0: disconnect, 1: connect
+     */
+    void ble_attach_conn(mbed::Callback<void(int, uint8_t *)> cb_func);
+
+    /**
+     * Attach a function to call whenever the BLE connection ends
+     *
+     * @param cb_func       Pointer to the function to be calledt
+     *                      cb_func argument  0: disconnect, 1: connect
+     */
+    void ble_attach_disconn(mbed::Callback<void(int)> cb_func);
+
+    /**
+     * Attach a function to call whenever characteristic data is written
+     *
+     * @param cb_func       Pointer to the function to be called
+     */
+    void ble_attach_write(mbed::Callback<void(ble_packet_t *)> cb_func);
+
+    /**
+     * Attach a function to call whenever scan data is received
+     *
+     * @param cb_func       Pointer to the function to be called
+     */
+    void ble_attach_scan(mbed::Callback<void(ble_scan_t *)> cb_func);
+
+private:
+    #define PRIMARY_SERVICE_BUF_NUM    16
+    #define DISCOVERS_CHAR_BUF_NUM     16
+    #define DISCOVERS_DESC_BUF_NUM     16
+
+    struct {
+        mbed::Callback<void()> callback;
+        int  Notified;
+    } _cbs_ble;
+
+    mbed::Callback<void(int, uint8_t *)> _ble_conn_cb;
+    mbed::Callback<void(int)> _ble_disconn_cb;
+    mbed::Callback<void(ble_packet_t *)> _ble_write_cb;
+    mbed::Callback<void(ble_scan_t *)> _ble_scan_cb;
+    int _ble_role;
+    bool _init_end_ble;
+    int _primary_service_idx;
+    int _discovers_char_idx;
+    int _discovers_desc_idx;
+    ble_primary_service_t _primary_service[PRIMARY_SERVICE_BUF_NUM];
+    ble_discovers_char_t _discovers_char[DISCOVERS_CHAR_BUF_NUM];
+    ble_discovers_desc_t _discovers_desc[DISCOVERS_DESC_BUF_NUM];
+
+    void _check_esp32_fw_version(void);
+    bool _startup_ble();
+    void _ble_conn();
+    void _ble_disconn();
+    void _ble_write();
+    void _ble_scan();
+    void _ble_primsrv();
+    void _ble_discovers_char();
+    char _int2char(int data);
+    int _char2int(char c);
+    int _set_char(char * buf1, const uint8_t * buf2, int size);
+#endif /* TARGET_ESP32AT_BLE */
+
 };
 #endif
 #endif /* ESP32_H */

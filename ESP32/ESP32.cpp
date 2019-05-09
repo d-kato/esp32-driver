@@ -17,6 +17,7 @@
 
 #if DEVICE_SERIAL && defined(MBED_CONF_EVENTS_PRESENT) && defined(MBED_CONF_NSAPI_PRESENT) && defined(MBED_CONF_RTOS_PRESENT)
 #include "ESP32.h"
+#include "platform/mbed_interface.h"
 
 #define ESP32_DEFAULT_BAUD_RATE   115200
 #define ESP32_ALL_SOCKET_IDS      -1
@@ -55,6 +56,11 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     , _id_bits(0), _id_bits_close(0), _server_act(false)
     , _wifi_status(STATUS_DISCONNECTED)
     , _wifi_status_cb(NULL), _at_version(0)
+#if defined(TARGET_ESP32AT_BLE)
+    , _ble_conn_cb(NULL), _ble_disconn_cb(NULL), _ble_write_cb(NULL), _ble_scan_cb(NULL)
+    , _ble_role(INIT_SERVER_ROLE), _init_end_ble(false)
+    , _primary_service_idx(0), _discovers_char_idx(0), _discovers_desc_idx(0)
+#endif /* TARGET_ESP32AT_BLE */
 {
     if ((int)en != NC) {
         _p_wifi_en = new DigitalOut(en);
@@ -67,6 +73,9 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     _baudrate = baudrate;
     memset(_ids, 0, sizeof(_ids));
     memset(_cbs, 0, sizeof(_cbs));
+#if defined(TARGET_ESP32AT_BLE)
+    memset(&_cbs_ble, 0, sizeof(_cbs_ble));
+#endif /* TARGET_ESP32AT_BLE */
 
     _rts = rts;
     _cts = cts;
@@ -96,6 +105,14 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     _parser.oob("3,CLOSED", callback(this, &ESP32::_closed_handler_3));
     _parser.oob("4,CLOSED", callback(this, &ESP32::_closed_handler_4));
     _parser.oob("WIFI ", callback(this, &ESP32::_connection_status_handler));
+#if defined(TARGET_ESP32AT_BLE)
+    _parser.oob("+BLECONN:", callback(this, &ESP32::_ble_conn));
+    _parser.oob("+BLEDISCONN:", callback(this, &ESP32::_ble_disconn));
+    _parser.oob("+WRITE:", callback(this, &ESP32::_ble_write));
+    _parser.oob("+BLESCAN:", callback(this, &ESP32::_ble_scan));
+    _parser.oob("+BLEGATTCPRIMSRV:", callback(this, &ESP32::_ble_primsrv));
+    _parser.oob("+BLEGATTCCHAR:", callback(this, &ESP32::_ble_discovers_char));
+#endif /* TARGET_ESP32AT_BLE */
 
     _serial.sigio(Callback<void()>(this, &ESP32::event));
 
@@ -229,6 +246,16 @@ bool ESP32::restart()
             success = false;
         }
     }
+#if defined(TARGET_ESP32AT_BLE)
+    if (_init_end_ble) {
+        _check_esp32_fw_version();
+        ret = _parser.send("AT+BLEINIT=%d", _ble_role)
+           && _parser.recv("OK");
+        if (!ret) {
+            success = false;
+        }
+    }
+#endif
     _smutex.unlock();
 
     return success;
@@ -985,6 +1012,12 @@ int ESP32::get_free_id()
 }
 
 void ESP32::event() {
+#if defined(TARGET_ESP32AT_BLE)
+    if ((_cbs_ble.callback) && (_cbs_ble.Notified == 0)) {
+        _cbs_ble.callback();
+        _cbs_ble.Notified = 1;
+    }
+#endif /* TARGET_ESP32AT_BLE */
     for (int i = 0; i < SOCKET_COUNT; i++) {
         if ((_cbs[i].callback) && (_cbs[i].Notified == 0)) {
             _cbs[i].callback(_cbs[i].data);
@@ -1044,5 +1077,936 @@ int8_t ESP32::get_wifi_status() const
 {
     return _wifi_status;
 }
+
+#if defined(TARGET_ESP32AT_BLE)
+bool ESP32::ble_set_role(int role)
+{
+    if ((role != INIT_CLIENT_ROLE) && (role != INIT_SERVER_ROLE)) {
+        return false;
+    }
+    if (_ble_role != role) {
+        _ble_role = role;
+        if (_init_end_ble) {
+            return restart();
+        }
+    }
+    return true;
+}
+
+bool ESP32::ble_get_role(int * role)
+{
+    *role = _ble_role;
+    return true;
+}
+
+bool ESP32::ble_set_device_name(const char * name)
+{
+    bool ret;
+
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLENAME=\"%s\"", name)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_get_device_name(char * name)
+{
+    bool ret;
+
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLENAME?")
+       && _parser.recv("+BLENAME:%s\n", name);
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+
+bool ESP32::ble_start_services()
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTSSRVCRE")
+       && _parser.recv("OK")
+       && _parser.send("AT+BLEGATTSSRVSTART")
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_scan_response(const uint8_t * data, int len)
+{
+    bool ret;
+    int size = 0;
+    char * wk_buf = new char[1024];
+
+    if (wk_buf == NULL) {
+        return false;
+    }
+
+    sprintf(&wk_buf[size], "AT+BLESCANRSPDATA=\"");
+    size = strlen(wk_buf);
+    _set_char(&wk_buf[size], data, len);
+    strcat(wk_buf, "\"");
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("%s", wk_buf)
+        && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+
+    delete [] wk_buf;
+
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_start_advertising()
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEADVSTART")
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_stop_advertising()
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEADVSTOP")
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_addr(int addr_type, const uint8_t * random_addr)
+{
+    bool ret;
+
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    if ((addr_type == 1) && (random_addr != NULL)) {
+        ret = _parser.send("AT+BLEADDR=1,\"%02x:%02x:%02x:%02x:%02x:%02x\"",
+                           random_addr[0], random_addr[1], random_addr[2], random_addr[3], random_addr[4], random_addr[5])
+           && _parser.recv("OK");
+    } else {
+        ret = _parser.send("AT+BLEADDR=%d", addr_type)
+           && _parser.recv("OK");
+    }
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_get_addr(uint8_t * public_addr)
+{
+    bool ret;
+
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEADDR?")
+       && _parser.recv("+BLEADDR:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx\n",
+                       &public_addr[0], &public_addr[1], &public_addr[2], &public_addr[3], &public_addr[4], &public_addr[5])
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_advertising_param(const advertising_param_t * param)
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEADVPARAM=%d,%d,%d,%d,%d,%d,%d,\"%02x:%02x:%02x:%02x:%02x:%02x\"",
+                        param->adv_int_min, param->adv_int_max, param->adv_type, param->own_addr_type,
+                        param->channel_map, param->adv_filter_policy, param->peer_addr_type,
+                        param->peer_addr[0], param->peer_addr[1], param->peer_addr[2],
+                        param->peer_addr[3], param->peer_addr[4], param->peer_addr[5])
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_advertising_data(const uint8_t * data, int len)
+{
+    bool ret;
+    int size = 0;
+    char * wk_buf = new char[1024];
+
+    if (wk_buf == NULL) {
+        return false;
+    }
+
+    sprintf(&wk_buf[size], "AT+BLEADVDATA=\"");
+    size = strlen(wk_buf);
+    _set_char(&wk_buf[size], data, len);
+    strcat(wk_buf, "\"");
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("%s", wk_buf)
+        && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+
+    delete [] wk_buf;
+
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_service(const gatt_service_t * service_list, int num)
+{
+    uint8_t header[17] = {0x9D,0x10,0x27,0x95,0x7B,0x22,0x53,0x65,0x72,0x76,0x69,0x63,0x65,0x22,0x3A,0x20,0x5B};
+    bool ret;
+    int idx = 0;
+    int size = 0;
+    uint8_t wk_data[4];
+    char * wk_buf = new char[1024];
+
+    if (wk_buf == NULL) {
+        return false;
+    }
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+
+    size = sizeof(header);
+    ret = _parser.send("AT+SYSFLASH=0,\"ble_data\"")
+       && _parser.recv("OK")
+       && _parser.send("AT+SYSFLASH=1,\"ble_data\",0,%d", size)
+       && _parser.recv(">")
+       && (_parser.write((char*)header, size) >= 0)
+       && _parser.recv("OK");
+    idx += size;
+    if (!ret) {
+        _smutex.unlock();
+        delete [] wk_buf;
+        return false;
+    }
+
+    for (int i = 0; i < num; i++) {
+        size = 0;
+        sprintf(&wk_buf[size], "{\"index\": %d, \"uuid\": \"", i);
+        size = strlen(wk_buf);
+        if ((service_list->uuid_type != 0) && (service_list->uuid_size <= 4)) {
+            for (int j = 0; j < service_list->uuid_size; j++) {
+                wk_data[j] = (service_list->uuid.data >> (8 * (service_list->uuid_size - 1 - j))) & 0x00FF;
+            }
+            _set_char(&wk_buf[size], wk_data, service_list->uuid_size);
+        } else {
+            _set_char(&wk_buf[size], service_list->uuid.addr, service_list->uuid_size);
+        }
+        size = strlen(wk_buf);
+
+        sprintf(&wk_buf[size], "\", \"uuid_len\": %d, \"val_max_len\": %d, \"value\": \"",
+                service_list->uuid_size * 8, service_list->val_max_len);
+        size = strlen(wk_buf);
+
+        if ((service_list->value_type != 0) && (service_list->value_size <= 4)) {
+            for (int j = 0; j < service_list->value_size; j++) {
+                wk_data[j] = (service_list->value.data >> (8 * (service_list->value_size - 1 - j))) & 0x00FF;
+            }
+            _set_char(&wk_buf[size], wk_data, service_list->value_size);
+        } else {
+            _set_char(&wk_buf[size], service_list->value.addr, service_list->value_size);
+        }
+        size = strlen(wk_buf);
+
+        sprintf(&wk_buf[size], "\", \"perm\": %d, \"val_cur_len\": %d}",
+                service_list->permissions, service_list->value_size);
+        if ((i + 1) == num) {
+            strcat(wk_buf, "]}");
+        } else {
+            strcat(wk_buf, ", ");
+        }
+        size = strlen(wk_buf);
+
+        ret = _parser.send("AT+SYSFLASH=1,\"ble_data\",%d,%d", idx, size)
+           && _parser.recv(">")
+           && (_parser.write((char*)wk_buf, size) >= 0)
+           && _parser.recv("OK");
+        idx += size;
+        if (!ret) {
+            break;
+        }
+        service_list++;
+    }
+    delete [] wk_buf;
+
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_set_characteristic(int srv_index, int char_index, const uint8_t * data, int len)
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTSSETATTR=%d,%d,,%d", srv_index, char_index, len)
+       && _parser.recv(">")
+       && (_parser.write((char*)data, len) >= 0)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_notifies_characteristic(int srv_index, int char_index, const uint8_t * data, int len)
+{
+    bool ret;
+
+    ble_set_role(INIT_SERVER_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTSNTFY=0,%d,%d,%d", srv_index, char_index, len)
+       && _parser.recv(">")
+       && (_parser.write((char*)data, len) >= 0)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_start_scan(int interval)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    ret = _parser.send("AT+BLESCAN=1,%d", interval);
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_stop_scan()
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLESCAN=0")
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_connect(int conn_index, const uint8_t * remote_addr)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLECONN=%d,\"%02x:%02x:%02x:%02x:%02x:%02x\"", conn_index,
+                       remote_addr[0], remote_addr[1], remote_addr[2],
+                       remote_addr[3], remote_addr[4], remote_addr[5])
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_disconnect(int conn_index)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEDISCONN=%d", conn_index)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_discovery_service(int conn_index, ble_primary_service_t * service, int * num)
+{
+    bool ret;
+    int cpy_num;
+
+    if ((service == NULL) || (num == NULL)) {
+        return false;
+    }
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(1000);
+    _primary_service_idx = 0;
+    ret = _parser.send("AT+BLEGATTCPRIMSRV=%d", conn_index)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        *num = 0;
+        return false;
+    }
+
+    cpy_num = *num;
+    if (cpy_num > _primary_service_idx) {
+        cpy_num = _primary_service_idx;
+    }
+    for (int i = 0; i < cpy_num; i++) {
+        service[i] = _primary_service[i];
+    }
+    *num = cpy_num;
+
+    return true;
+}
+
+bool ESP32::ble_discovery_characteristics(
+    int conn_index, int srv_index,
+    ble_discovers_char_t * discovers_char, int * char_num,
+    ble_discovers_desc_t * discovers_desc, int * desc_num
+)
+{
+    bool ret;
+    int cpy_num;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(1000);
+    _discovers_char_idx = 0;
+    _discovers_desc_idx = 0;
+    ret = _parser.send("AT+BLEGATTCCHAR=%d,%d", conn_index, srv_index)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        if (char_num != NULL) {
+            *char_num = 0;
+        }
+        if (desc_num != NULL) {
+            *desc_num = 0;
+        }
+        return false;
+    }
+
+    if ((discovers_char != NULL) && (char_num != NULL)) {
+        cpy_num = *char_num;
+        if (cpy_num > _discovers_char_idx) {
+            cpy_num = _discovers_char_idx;
+        }
+        for (int i = 0; i < cpy_num; i++) {
+            discovers_char[i] = _discovers_char[i];
+        }
+        *char_num = cpy_num;
+    }
+
+    if ((discovers_desc != NULL) && (desc_num != NULL)) {
+        cpy_num = *desc_num;
+        if (cpy_num > _discovers_desc_idx) {
+            cpy_num = _discovers_desc_idx;
+        }
+        for (int i = 0; i < cpy_num; i++) {
+            discovers_desc[i] = _discovers_desc[i];
+        }
+        *desc_num = cpy_num;
+    }
+
+    return true;
+}
+
+int32_t ESP32::ble_read_characteristic(int conn_index, int srv_index, int char_index, uint8_t * data, int amount)
+{
+    bool ret;
+    int wk_conn_index;
+    int data_len;
+    int idx = 0;;
+    char c;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTCRD=%d,%d,%d", conn_index, srv_index, char_index)
+       && _parser.recv("+BLEGATTCRD:%d,%d,", &wk_conn_index, &data_len);
+    if (!ret) {
+        setTimeout();
+        _smutex.unlock();
+        return -1;
+    }
+    for (int i = 0; i < data_len; i++) {
+        c = _parser.getc();
+        if (idx < amount) {
+            data[idx++] = (uint8_t)c;
+        }
+    }
+    _parser.recv("OK");
+
+    setTimeout();
+    _smutex.unlock();
+
+    return idx;
+}
+
+int32_t ESP32::ble_read_descriptor(int conn_index, int srv_index, int char_index, int desc_index, uint8_t * data, int amount)
+{
+    bool ret;
+    int wk_conn_index;
+    int data_len;
+    int idx = 0;;
+    char c;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTCRD=%d,%d,%d,%d", conn_index, srv_index, char_index, desc_index)
+       && _parser.recv("+BLEGATTCRD:%d,%d,", &wk_conn_index, &data_len);
+    if (!ret) {
+        setTimeout();
+        _smutex.unlock();
+        return 0;
+    }
+    for (int i = 0; i < data_len; i++) {
+        c = _parser.getc();
+        if (idx < amount) {
+            data[idx++] = (uint8_t)c;
+        }
+    }
+    _parser.recv("OK");
+
+    setTimeout();
+    _smutex.unlock();
+
+    return idx;
+}
+
+bool ESP32::ble_write_characteristic(int conn_index, int srv_index, int char_index, const uint8_t * data, int amount)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTCWR=%d,%d,%d,,%d", conn_index, srv_index, char_index, amount)
+       && _parser.recv(">")
+       && (_parser.write((char*)data, amount) >= 0)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+bool ESP32::ble_write_descriptor(int conn_index, int srv_index, int char_index, int desc_index, const uint8_t * data, int amount)
+{
+    bool ret;
+
+    ble_set_role(INIT_CLIENT_ROLE);
+    _smutex.lock();
+    _startup_ble();
+    setTimeout(500);
+    ret = _parser.send("AT+BLEGATTCWR=%d,%d,%d,%d,%d", conn_index, srv_index, char_index, desc_index, amount)
+       && _parser.recv(">")
+       && (_parser.write((char*)data, amount) >= 0)
+       && _parser.recv("OK");
+    setTimeout();
+    _smutex.unlock();
+    if (!ret) {
+        return false;
+    }
+    return true;
+}
+
+void ESP32::ble_process_oob(uint32_t timeout, bool all)
+{
+    _smutex.lock();
+    setTimeout(timeout);
+    // Poll for inbound packets
+    while (_parser.process_oob() && all) {
+    }
+    setTimeout();
+    _cbs_ble.Notified = 0;
+    _smutex.unlock();
+}
+
+void ESP32::ble_attach_sigio(mbed::Callback<void()> cb_func)
+{
+    _smutex.lock();
+    _cbs_ble.Notified = 0;
+    _cbs_ble.callback = cb_func;
+    _smutex.unlock();
+}
+
+void ESP32::ble_attach_conn(mbed::Callback<void(int, uint8_t *)> cb_func)
+{
+    _smutex.lock();
+    _ble_conn_cb = cb_func;
+    _smutex.unlock();
+}
+
+void ESP32::ble_attach_disconn(mbed::Callback<void(int)> cb_func)
+{
+    _smutex.lock();
+    _ble_disconn_cb = cb_func;
+    _smutex.unlock();
+}
+
+void ESP32::ble_attach_write(mbed::Callback<void(ble_packet_t *)> cb_func)
+{
+    _smutex.lock();
+    _ble_write_cb = cb_func;
+    _smutex.unlock();
+}
+
+void ESP32::ble_attach_scan(mbed::Callback<void(ble_scan_t *)> cb_func)
+{
+    _smutex.lock();
+    _ble_scan_cb = cb_func;
+    _smutex.unlock();
+}
+
+void ESP32::_check_esp32_fw_version(void)
+{
+    if ((_ble_role == INIT_CLIENT_ROLE) && (_at_version < 0x01010300)) {
+        printf("Please update ESP32 FW \"AT version:1.1.3.0\" or later.\r\n");
+        mbed_die();
+    }
+}
+
+bool ESP32::_startup_ble()
+{
+    _startup_common();
+
+    if (_init_end_ble) {
+        return true;
+    }
+
+    _check_esp32_fw_version();
+
+    setTimeout();
+    bool success = _parser.send("AT+BLEINIT=%d", _ble_role)
+                && _parser.recv("OK");
+    if (success) {
+        _init_end_ble = true;
+    }
+
+    return success;
+}
+
+void ESP32::_ble_conn()
+{
+    int conn_index;
+    uint8_t remote_addr[6];
+
+    _parser.recv("%d,\"%hhx:%hhx:%hhx:%hhx:%hhx:%hhx\"", &conn_index,
+                 &remote_addr[0], &remote_addr[1], &remote_addr[2], &remote_addr[3], &remote_addr[4], &remote_addr[5]);
+    if(_ble_conn_cb) {
+        _ble_conn_cb(conn_index, remote_addr);
+    }
+}
+
+void ESP32::_ble_disconn()
+{
+    int conn_index;
+
+    _parser.recv("%d", &conn_index);
+    if(_ble_disconn_cb) {
+        _ble_disconn_cb(conn_index);
+    }
+}
+
+void ESP32::_ble_write()
+{
+    int conn_index;
+    int srv_index;
+    int char_index;
+    int desc_index = -1;
+    int amount;
+    char c;
+    uint32_t tmp_timeout;
+
+    if(!_ble_write_cb) {
+        return;
+    }
+
+    _parser.recv("%d,%d,%d,", &conn_index, &srv_index, &char_index);
+    (void)conn_index;
+    c = _parser.getc();
+    if (c != ',') {
+        desc_index = c;
+        _parser.getc(); // to read ',' after desc_index.
+    }
+    _parser.recv("%d,", &amount);
+
+    ble_packet_t *ble_packet = (ble_packet_t*)malloc(
+            sizeof(ble_packet_t) + amount);
+    if (!ble_packet) {
+        return;
+    }
+
+    ble_packet->srv_index  = srv_index;
+    ble_packet->char_index = char_index;
+    ble_packet->desc_index = desc_index;
+    ble_packet->len = amount;
+    ble_packet->data = ble_packet + 1;
+
+    tmp_timeout = last_timeout_ms;
+    setTimeout(500);
+    if (!(_parser.read((char*)(ble_packet + 1), amount))) {
+        free(ble_packet);
+        setTimeout(tmp_timeout);
+        return;
+    }
+    if(_ble_write_cb) {
+        _ble_write_cb(ble_packet);
+    }
+    free(ble_packet);
+}
+
+void ESP32::_ble_scan()
+{
+    char c;
+    int idx;
+
+    if(!_ble_scan_cb) {
+        return;
+    }
+
+    ble_scan_t *ble_scan = (ble_scan_t*)malloc(sizeof(ble_scan_t));
+    if (!ble_scan) {
+        return;
+    }
+
+    _parser.recv("%hhx:%hhx:%hhx:%hhx:%hhx:%hhx,%hhd,",
+                 &ble_scan->addr[0], &ble_scan->addr[1], &ble_scan->addr[2],
+                 &ble_scan->addr[3], &ble_scan->addr[4], &ble_scan->addr[5],
+                 &ble_scan->rssi);
+
+    idx = 0;
+    for (int i = 0; i < (31 * 2); i++) {
+        c = _parser.getc();
+        if (c == ',') {
+            break;
+        }
+        if ((i & 0x01) == 0) {
+            ble_scan->adv_data[idx] = (_char2int(c) << 4);
+        } else {
+            ble_scan->adv_data[idx] += _char2int(c);
+            idx++;
+        }
+    }
+    ble_scan->adv_data_len = idx;
+
+    if (c != ',') {
+        c = _parser.getc();
+    }
+
+    idx = 0;
+    for (int i = 0; i < (31 * 2); i++) {
+        c = _parser.getc();
+        if (c == ',') {
+            break;
+        }
+        if ((i & 0x01) == 0) {
+            ble_scan->scan_rsp_data[idx] = (_char2int(c) << 4);
+        } else {
+            ble_scan->scan_rsp_data[idx] += _char2int(c);
+            idx++;
+        }
+    }
+    ble_scan->scan_rsp_data_len = idx;
+
+    if (c != ',') {
+        c = _parser.getc();
+    }
+
+    _parser.recv("%hhd\n", &ble_scan->addr_type);
+
+    if(_ble_scan_cb) {
+        _ble_scan_cb(ble_scan);
+    }
+    free(ble_scan);
+}
+
+void ESP32::_ble_primsrv()
+{
+    // fix me (supports only short uuid)
+    int conn_index;
+    ble_primary_service_t * p_service = &_primary_service[_primary_service_idx];
+
+    if (_primary_service_idx < PRIMARY_SERVICE_BUF_NUM) {
+        if (_parser.recv("%d,%d,%hx,%d\n", &conn_index, &p_service->srv_index,
+                          &p_service->srv_uuid, &p_service->srv_type)) {
+            _primary_service_idx++;
+        }
+    }
+}
+
+void ESP32::_ble_discovers_char()
+{
+    // fix me (supports only short uuid)
+    int conn_index;
+    int srv_index;
+    char type[4];
+
+    _parser.getc();  // skip '"'
+    _parser.read(type, 4);
+    _parser.getc();  // skip '"'
+
+    if (_parser.recv(",%d,%d,", &conn_index, &srv_index)) {
+        if (memcmp(type, "char", 4) == 0) {
+            if (_discovers_char_idx < DISCOVERS_CHAR_BUF_NUM) {
+                ble_discovers_char_t * p_char = &_discovers_char[_discovers_char_idx];
+                if (_parser.recv("%d,%hx,%hhx\n", &p_char->char_index, &p_char->char_uuid, &p_char->char_prop)) {
+                    _discovers_char_idx++;
+                }
+            }
+        } else if (memcmp(type, "desc", 4) == 0) {
+            if (_discovers_desc_idx < DISCOVERS_DESC_BUF_NUM) {
+                ble_discovers_desc_t * p_desc = &_discovers_desc[_discovers_desc_idx];
+                if (_parser.recv("%d,%d,%hx\n", &p_desc->char_index, &p_desc->desc_index, &p_desc->desc_uuid)) {
+                    _discovers_desc_idx++;
+                }
+            }
+        } else {
+            // do nothing
+        }
+    }
+}
+
+char ESP32::_int2char(int data)
+{
+    if ((data >= 0) && (data <= 9)) {
+        return data + '0';
+    } else if ((data >= 0xA) && (data <= 0xF)) {
+        return data - 0xA + 'A';
+    } else {
+        return 0;
+    }
+}
+
+int ESP32::_char2int(char c)
+{
+    if ((c >= '0') && (c <= '9')) {
+        return c - '0';
+    } else if ((c >= 'A') && (c <= 'F')) {
+        return c - 'A' + 0xA;
+    } else if ((c >= 'a') && (c <= 'f')) {
+        return c - 'a' + 0xA;
+    } else {
+        return 0;
+    }
+}
+
+int ESP32::_set_char(char * buf1, const uint8_t * buf2, int size)
+{
+    int idx = 0;
+
+    for (int i = 0; i < size; i++) {
+        buf1[idx++] = _int2char((buf2[i]>> 4) & 0x0F);
+        buf1[idx++] = _int2char(buf2[i] & 0x0F);
+    }
+    buf1[idx] = '\0';
+
+    return idx;
+}
+#endif /* TARGET_ESP32AT_BLE */
+
 #endif
 
