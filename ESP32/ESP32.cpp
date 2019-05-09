@@ -39,6 +39,14 @@ ESP32 * ESP32::getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, boo
     return instESP32;
 }
 
+ESP32 * ESP32::getESP32Inst(bool debug)
+{
+    return getESP32Inst(MBED_CONF_ESP32_WIFI_EN, MBED_CONF_ESP32_WIFI_IO0,
+                        MBED_CONF_ESP32_WIFI_TX, MBED_CONF_ESP32_WIFI_RX, debug,
+                        MBED_CONF_ESP32_WIFI_RTS, MBED_CONF_ESP32_WIFI_CTS,
+                        MBED_CONF_ESP32_WIFI_BAUDRATE);
+}
+
 ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     PinName rts, PinName cts, int baudrate)
     : _p_wifi_en(NULL), _p_wifi_io0(NULL), init_end(false)

@@ -58,6 +58,7 @@ public:
     */
     static ESP32 * getESP32Inst(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
                                 PinName rts, PinName cts, int baudrate);
+    static ESP32 * getESP32Inst(bool debug = false);
 
     ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
           PinName rts, PinName cts, int baudrate);
