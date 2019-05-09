@@ -63,11 +63,13 @@ public:
           PinName rts, PinName cts, int baudrate);
 
     /**
-    * Check firmware version of ESP8266
+    * Checks Version Information
     *
-    * @return integer firmware version or -1 if firmware query command gives outdated response
+    * @param ver_info buffer address for storing version information
+    * @param buf_size  buffer size
+    * @return String of Version Information
     */
-    int get_firmware_version(void);
+    bool get_version_info(char * ver_info, int buf_size);
 
     /**
     * Sets the Wi-Fi Mode
@@ -280,6 +282,7 @@ private:
     static ESP32 * instESP32;
     int8_t _wifi_status;
     mbed::Callback<void(int8_t)> _wifi_status_cb;
+    uint32_t _at_version;
 
     bool _ids[SOCKET_COUNT];
     struct {

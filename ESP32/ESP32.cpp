@@ -46,7 +46,7 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     , _packets(0), _packets_end(&_packets)
     , _id_bits(0), _id_bits_close(0), _server_act(false)
     , _wifi_status(STATUS_DISCONNECTED)
-    , _wifi_status_cb(NULL)
+    , _wifi_status_cb(NULL), _at_version(0)
 {
     if ((int)en != NC) {
         _p_wifi_en = new DigitalOut(en);
@@ -99,23 +99,59 @@ void ESP32::debugOn(bool debug)
     _parser.debug_on((debug) ? 1 : 0);
 }
 
-int ESP32::get_firmware_version()
+bool ESP32::get_version_info(char * ver_info, int buf_size)
 {
-    int version;
+    bool ret;
+    int idx = 0;
+    const char key_word[6] = "\nOK\r\n";
+    char wk_buf[5];
+    int wk_idx;
+    char c;
 
+    if (ver_info == NULL) {
+        return false;
+    }
     _smutex.lock();
-    startup();
-    bool done = _parser.send("AT+GMR")
-           && _parser.recv("SDK version:%d", &version)
-           && _parser.recv("OK");
+    _startup_common();
+    setTimeout(500);
+    ret = _parser.send("AT+GMR");
+    if (!ret) {
+        setTimeout();
+        _smutex.unlock();
+        return false;
+    }
+    for (int i = 0; i < 10; i++) {
+        _parser.getc();   // dummy read
+    }
+    while (idx < buf_size) {
+        wk_idx = 0;
+        for (int i = 0; i < 5; i++) {
+            c = _parser.getc();
+            wk_buf[wk_idx++] = c;
+            if (c != key_word[i]) {
+                break;
+            }
+        }
+        if (wk_idx >= 5) {
+            break;
+        }
+        for (int i = 0; (i < wk_idx) && (idx < buf_size); i++) {
+            ver_info[idx++] = wk_buf[i];
+        }
+    }
+    setTimeout();
     _smutex.unlock();
 
-    if(done) {
-        return version;
-    } else { 
-        // Older firmware versions do not prefix the version with "SDK version: "
-        return -1;
+    ver_info[idx] = '\0';
+    while (idx > 0) {
+        idx--;
+        if (ver_info[idx] != '\r' && ver_info[idx] != '\n') {
+            break;
+        }
+        ver_info[idx] = '\0';
     }
+
+    return true;
 }
 
 bool ESP32::startup()
@@ -310,6 +346,18 @@ bool ESP32::reset(void)
                         break;
                 }
 #endif
+            }
+
+            uint8_t wk_ver[4];
+
+            if (_parser.send("AT+GMR")
+                && _parser.recv("AT version:%hhx.%hhx.%hhx.%hhx(", &wk_ver[0], &wk_ver[1], &wk_ver[2], &wk_ver[3])
+                && _parser.recv("OK")
+            ) {
+                _at_version = (wk_ver[0] << 24)
+                            | (wk_ver[1] << 16)
+                            | (wk_ver[2] << 8)
+                            | (wk_ver[3] << 0);
             }
 
             return true;
