@@ -1014,14 +1014,14 @@ int ESP32::get_free_id()
 void ESP32::event() {
 #if defined(TARGET_ESP32AT_BLE)
     if ((_cbs_ble.callback) && (_cbs_ble.Notified == 0)) {
-        _cbs_ble.callback();
         _cbs_ble.Notified = 1;
+        _cbs_ble.callback();
     }
 #endif /* TARGET_ESP32AT_BLE */
     for (int i = 0; i < SOCKET_COUNT; i++) {
         if ((_cbs[i].callback) && (_cbs[i].Notified == 0)) {
-            _cbs[i].callback(_cbs[i].data);
             _cbs[i].Notified = 1;
+            _cbs[i].callback(_cbs[i].data);
         }
     }
 }
@@ -1716,12 +1716,12 @@ bool ESP32::ble_write_descriptor(int conn_index, int srv_index, int char_index, 
 void ESP32::ble_process_oob(uint32_t timeout, bool all)
 {
     _smutex.lock();
+    _cbs_ble.Notified = 0;
     setTimeout(timeout);
     // Poll for inbound packets
     while (_parser.process_oob() && all) {
     }
     setTimeout();
-    _cbs_ble.Notified = 0;
     _smutex.unlock();
 }
 
