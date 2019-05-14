@@ -680,12 +680,12 @@ int ESP32::scan(WiFiAccessPoint *res, unsigned limit)
 
         cnt++;
         if ((limit != 0) && (cnt >= limit)) {
+            setTimeout(10);
+            _parser.recv("OK");
             break;
         }
         setTimeout(500);
     }
-    setTimeout(10);
-    _parser.recv("OK");
     setTimeout();
     _smutex.unlock();
 
@@ -954,12 +954,46 @@ void ESP32::socket_attach(int id, void (*callback)(void *), void *data)
 
 bool ESP32::recv_ap(nsapi_wifi_ap_t *ap)
 {
-    int sec;
-    bool ret = _parser.recv("+CWLAP:(%d,\"%32[^\"]\",%hhd,\"%hhx:%hhx:%hhx:%hhx:%hhx:%hhx\",%hhu)", &sec, ap->ssid,
-                            &ap->rssi, &ap->bssid[0], &ap->bssid[1], &ap->bssid[2], &ap->bssid[3], &ap->bssid[4],
-                            &ap->bssid[5], &ap->channel);
+    bool ret;
+    int c;
+    const char keyword_0[8] = "+CWLAP:";
+    const char keyword_1[6] = "\nOK\r\n";
+    int idx_0 = 0;
+    int idx_1 = 0;
 
-    ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
+    while (true) {
+        c = _parser.getc();
+        if (c < 0) {
+            ret = false;
+            break;
+        }
+        if ((char)c == keyword_0[idx_0]) {
+            idx_0++;
+        } else {
+            idx_0 = 0;
+        }
+        if ((char)c == keyword_1[idx_1]) {
+            idx_1++;
+        } else {
+            idx_1 = 0;
+        }
+
+        // "+CWLAP:"
+        if (idx_0 >= (int)(sizeof(keyword_0) - 1)) {
+            int sec;
+            ret = _parser.recv("(%d,\"%32[^\"]\",%hhd,\"%hhx:%hhx:%hhx:%hhx:%hhx:%hhx\",%hhu)", &sec, ap->ssid,
+                               &ap->rssi, &ap->bssid[0], &ap->bssid[1], &ap->bssid[2], &ap->bssid[3], &ap->bssid[4],
+                               &ap->bssid[5], &ap->channel);
+            ap->security = sec < 5 ? (nsapi_security_t)sec : NSAPI_SECURITY_UNKNOWN;
+            break;
+        }
+
+        // "\nOK\r\n"
+        if (idx_1 >= (int)(sizeof(keyword_1) - 1)) {
+            ret = false;
+            break;
+        }
+    }
 
     return ret;
 }
