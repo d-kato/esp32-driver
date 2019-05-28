@@ -732,7 +732,6 @@ private:
     ble_discovers_char_t _discovers_char[DISCOVERS_CHAR_BUF_NUM];
     ble_discovers_desc_t _discovers_desc[DISCOVERS_DESC_BUF_NUM];
 
-    void _check_esp32_fw_version(void);
     bool _startup_ble();
     void _ble_conn();
     void _ble_disconn();
