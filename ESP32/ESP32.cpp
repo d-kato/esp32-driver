@@ -402,6 +402,8 @@ bool ESP32::reset(void)
 #endif
             }
 
+            ThisThread::sleep_for(5);
+
             uint8_t wk_ver[4+1]; /* It needs 1 byte extra. */
 
             if (_parser.send("AT+GMR")
