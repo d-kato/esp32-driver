@@ -727,6 +727,7 @@ bool ESP32::open(const char *type, int id, const char* addr, int port, int opt)
 bool ESP32::send(int id, const void *data, uint32_t amount)
 {
     int send_size;
+    int max_send_size = 2048;
     bool ret;
     int error_cnt = 0;
     int index = 0;
@@ -734,6 +735,10 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
     _cbs[id].Notified = 0;
     if (amount == 0) {
         return true;
+    }
+
+    if (_cts == NC) {
+        max_send_size = 512;
     }
 
     //May take a second try if device is busy
@@ -745,8 +750,8 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
             return false;
         }
         send_size = amount;
-        if (send_size > 512) {
-            send_size = 512;
+        if (send_size > max_send_size) {
+            send_size = max_send_size;
         }
         _startup_wifi();
         setTimeout(ESP32_SEND_TIMEOUT);
