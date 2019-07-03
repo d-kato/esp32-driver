@@ -860,6 +860,7 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
     } else if (((_id_bits & (1 << id)) == 0) || ((_id_bits_close & (1 << id)) != 0)) {
         return 0;
     } else {
+        _cbs[id].Notified = 0;
         return -1;
     }
 }
