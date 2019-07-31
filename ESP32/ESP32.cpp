@@ -407,7 +407,7 @@ bool ESP32::reset(void)
             uint8_t wk_ver[4+1]; /* It needs 1 byte extra. */
 
             if (_parser.send("AT+GMR")
-                && _parser.recv("AT version:%hhx.%hhx.%hhx.%hhx(", &wk_ver[0], &wk_ver[1], &wk_ver[2], &wk_ver[3])
+                && _parser.recv("AT version:%hhx.%hhx.%hhx.%hhx", &wk_ver[0], &wk_ver[1], &wk_ver[2], &wk_ver[3])
                 && _parser.recv("OK")
             ) {
                 _at_version = (wk_ver[0] << 24)
