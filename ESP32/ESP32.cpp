@@ -53,7 +53,7 @@ ESP32::ESP32(PinName en, PinName io0, PinName tx, PinName rx, bool debug,
     : _p_wifi_en(NULL), _p_wifi_io0(NULL), _init_end_common(false), _init_end_wifi(false)
     , _serial(tx, rx, ESP32_DEFAULT_BAUD_RATE), _parser(&_serial, "\r\n")
     , _packets(0), _packets_end(&_packets)
-    , _id_bits(0), _id_bits_close(0), _server_act(false)
+    , _id_bits(0), _server_act(false)
     , _wifi_status(STATUS_DISCONNECTED)
     , _wifi_status_cb(NULL), _at_version(0)
 #if defined(TARGET_ESP32AT_BLE)
@@ -316,7 +316,6 @@ void ESP32::socket_handler(bool connect, int id)
         }
     } else {
         _id_bits &= ~(1 << id);
-        _id_bits_close |= (1 << id);
         if (_server_act) {
             for (size_t i = 0; i < _accept_id.size(); i++) {
                 if (id == _accept_id[i]) {
@@ -353,15 +352,6 @@ bool ESP32::accept(int * p_id)
         _smutex.unlock();
         if (!ret) {
             ThisThread::sleep_for(5);
-        }
-    }
-
-    if (ret) {
-        for (int i = 0; i < 50; i++) {
-            if ((_id_bits_close & (1 << *p_id)) == 0) {
-                break;
-            }
-            ThisThread::sleep_for(10);
         }
     }
 
@@ -744,8 +734,7 @@ bool ESP32::send(int id, const void *data, uint32_t amount)
     //May take a second try if device is busy
     while (error_cnt < 2) {
         _smutex.lock();
-        if (((_id_bits & (1 << id)) == 0)
-         || ((_id_bits_close & (1 << id)) != 0)) {
+        if ((_id_bits & (1 << id)) == 0) {
             _smutex.unlock();
             return false;
         }
@@ -857,7 +846,7 @@ int32_t ESP32::recv(int id, void *data, uint32_t amount, uint32_t timeout)
 
     if (idx > 0) {
         return idx;
-    } else if (((_id_bits & (1 << id)) == 0) || ((_id_bits_close & (1 << id)) != 0)) {
+    } else if ((_id_bits & (1 << id)) == 0) {
         return 0;
     } else {
         _cbs[id].Notified = 0;
@@ -891,9 +880,7 @@ bool ESP32::close(int id, bool wait_close)
     if (wait_close) {
         _smutex.lock();
         for (int j = 0; j < 2; j++) {
-            if (((_id_bits & (1 << id)) == 0)
-             || ((_id_bits_close & (1 << id)) != 0)) {
-                _id_bits_close &= ~(1 << id);
+            if ((_id_bits & (1 << id)) == 0) {
                 _ids[id] = false;
                 _clear_socket_packets(id);
                 _smutex.unlock();
@@ -911,7 +898,6 @@ bool ESP32::close(int id, bool wait_close)
     for (unsigned i = 0; i < 2; i++) {
         _smutex.lock();
         if ((_id_bits & (1 << id)) == 0) {
-            _id_bits_close &= ~(1 << id);
             _ids[id] = false;
             _clear_socket_packets(id);
             _smutex.unlock();
@@ -923,7 +909,6 @@ bool ESP32::close(int id, bool wait_close)
             && _parser.recv("OK")) {
             setTimeout();
             _clear_socket_packets(id);
-            _id_bits_close &= ~(1 << id);
             _ids[id] = false;
             _smutex.unlock();
             return true;

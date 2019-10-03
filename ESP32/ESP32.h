@@ -278,7 +278,6 @@ private:
 
     std::vector<int> _accept_id;
     uint32_t _id_bits;
-    uint32_t _id_bits_close;
     bool _server_act;
     rtos::Mutex _smutex; // Protect serial port access
     static ESP32 * instESP32;
